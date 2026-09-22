@@ -6,6 +6,7 @@ and post-call clinical audit engine using AssemblyAI LeMUR.
 import json
 import asyncio
 import re
+import time
 import requests
 import websockets
 import assemblyai as aai
@@ -155,17 +156,26 @@ Respond ONLY with a valid JSON object matching this exact schema:
                 "temperature": 0.1
             }
 
+            print(f"\n[ASSEMBLYAI LIVE API] -> POST https://llm-gateway.assemblyai.com/v1/chat/completions | Model: qwen3.5-4b-32k-fast")
+            print(f"[ASSEMBLYAI LIVE API] Running LeMUR Clinical Audit on {len(transcript_text)} characters transcript...")
+            t0 = time.time()
             resp = requests.post(url, headers=headers, json=payload, timeout=12)
+            elapsed = int((time.time() - t0) * 1000)
+            
             if resp.status_code == 200:
                 raw_content = resp.json()["choices"][0]["message"]["content"].strip()
+                print(f"[ASSEMBLYAI LIVE API] <- HTTP 200 OK in {elapsed}ms | Model: qwen3.5-4b-32k-fast")
                 if raw_content.startswith("```"):
                     raw_content = re.sub(r"^```(?:json)?", "", raw_content)
                     raw_content = re.sub(r"```$", "", raw_content).strip()
                 parsed = json.loads(raw_content)
                 audit = ClinicalCallAudit(**parsed)
+                print(f"[ASSEMBLYAI LIVE API] Extracted Patient: {audit.patient_full_name} | Meds: {len(audit.medications_processed)} items\n")
                 return audit.model_dump()
+            else:
+                print(f"[ASSEMBLYAI LIVE API] <- HTTP {resp.status_code} in {elapsed}ms: {resp.text[:150]}\n")
         except Exception as e:
-            print(f"AssemblyAI LLM Gateway extraction notice: {e}")
+            print(f"[ASSEMBLYAI LIVE API] <- ERROR: {e}\n")
 
     # High-Assurance Deterministic Extraction Fallback
     adverse = any(trig in t_lower for trig in [

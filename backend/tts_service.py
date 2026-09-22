@@ -77,17 +77,24 @@ async def synthesize_cartesia_audio(
         }
     }
 
+    t0 = asyncio.get_event_loop().time()
     try:
+        voice_label = AVAILABLE_VOICES.get(target_voice_id, {}).get("name", target_voice_id)
+        print(f"\n[CARTESIA LIVE API] -> POST https://api.cartesia.ai/tts/bytes | Model: sonic-2 | Voice: {voice_label}")
+        print(f"[CARTESIA LIVE API] Synthesizing: \"{text[:75]}...\"")
+        
         async with aiohttp.ClientSession() as session:
             async with session.post(url, headers=headers, json=payload, timeout=aiohttp.ClientTimeout(total=8)) as resp:
+                elapsed = int((asyncio.get_event_loop().time() - t0) * 1000)
                 if resp.status == 200:
                     audio_bytes = await resp.read()
+                    print(f"[CARTESIA LIVE API] <- HTTP 200 OK in {elapsed}ms | Audio Size: {len(audio_bytes):,} bytes (WAV)\n")
                     return audio_bytes
                 else:
                     err = await resp.text()
-                    print(f"Cartesia synthesis notice: HTTP {resp.status} - {err[:150]}")
+                    print(f"[CARTESIA LIVE API] <- HTTP {resp.status} in {elapsed}ms: {err[:150]}\n")
     except Exception as e:
-        print(f"Cartesia synthesis exception: {e}")
+        print(f"[CARTESIA LIVE API] <- ERROR: {e}\n")
 
     return None
 
