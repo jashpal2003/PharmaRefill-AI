@@ -5,6 +5,8 @@ and post-call clinical audit engine using AssemblyAI LeMUR.
 
 import json
 import asyncio
+import re
+import requests
 import websockets
 import assemblyai as aai
 from pydantic import BaseModel, Field
@@ -106,31 +108,64 @@ async def connect_assemblyai_realtime(
                 break
 
 def run_lemur_clinical_audit(transcript_text: str) -> dict:
-    """Executes AssemblyAI LeMUR structured clinical audit on completed call transcript."""
+    """Executes AssemblyAI LeMUR / LLM Gateway structured clinical audit on completed call transcript."""
     t_lower = transcript_text.lower()
     
-    # Check if live AssemblyAI API key exists
+    # 1. Live AssemblyAI LLM Gateway Extraction
     if ASSEMBLYAI_API_KEY and len(ASSEMBLYAI_API_KEY.strip()) > 5:
         try:
-            transcription = aai.Transcriber().transcribe(transcript_text)
-            prompt = """
-            You are an automated pharmacy compliance officer. Review this recorded patient triage call transcript.
-            Extract:
-            1. Confirmation of statutory call recording consent.
-            2. Any adverse drug reactions, acute allergies, or emergency symptoms.
-            3. All requested medications and note if any DEA controlled substances were requested.
-            4. Confirmed out-of-pocket copays and promised pickup times.
-            5. Clear actionable tasks for the dispensing pharmacist.
-            """
+            url = "https://llm-gateway.assemblyai.com/v1/chat/completions"
+            headers = {
+                "authorization": ASSEMBLYAI_API_KEY,
+                "content-type": "application/json"
+            }
+            prompt = f"""You are an automated pharmacy compliance officer. Review this recorded patient triage call transcript:
 
-            response = aai.Lemur.task(
-                prompt=prompt,
-                transcript_ids=[transcription.id],
-                response_format=ClinicalCallAudit.model_json_schema()
-            )
-            return json.loads(response.response)
+{transcript_text}
+
+Extract:
+1. Statutory call recording consent confirmation.
+2. Any adverse drug reactions, acute allergies, or emergency symptoms (anaphylaxis).
+3. All requested medications (e.g. Atorvastatin, Metformin, Lisinopril, Oxycodone) and note if DEA controlled.
+4. Total out-of-pocket copay disclosed (e.g. $19.90) and promised pickup window (e.g. Friday 3:00 PM - 6:00 PM).
+5. Actionable checklist items for dispensing staff.
+
+Respond ONLY with a valid JSON object matching this exact schema:
+{{
+  "patient_full_name": "Eleanor Vance",
+  "patient_dob": "1958-04-12",
+  "consent_disclosed": true,
+  "emergency_adverse_reaction_detected": false,
+  "adverse_reaction_summary": null,
+  "medications_processed": [
+    {{"drug_name": "Atorvastatin Calcium", "strength": "20mg", "action_type": "REFILL", "is_controlled": false}}
+  ],
+  "total_copay_disclosed": "$19.90",
+  "pickup_window_committed": "Friday afternoon",
+  "pharmacist_action_items": ["Review fill", "Stage bag"]
+}}"""
+
+            payload = {
+                "model": "qwen3.5-4b-32k-fast",
+                "messages": [
+                    {"role": "system", "content": "You are a clinical pharmacy audit assistant. Output valid JSON only, without backticks or markdown."},
+                    {"role": "user", "content": prompt}
+                ],
+                "max_tokens": 1500,
+                "temperature": 0.1
+            }
+
+            resp = requests.post(url, headers=headers, json=payload, timeout=12)
+            if resp.status_code == 200:
+                raw_content = resp.json()["choices"][0]["message"]["content"].strip()
+                if raw_content.startswith("```"):
+                    raw_content = re.sub(r"^```(?:json)?", "", raw_content)
+                    raw_content = re.sub(r"```$", "", raw_content).strip()
+                parsed = json.loads(raw_content)
+                audit = ClinicalCallAudit(**parsed)
+                return audit.model_dump()
         except Exception as e:
-            pass
+            print(f"AssemblyAI LLM Gateway extraction notice: {e}")
 
     # High-Assurance Deterministic Extraction Fallback
     adverse = any(trig in t_lower for trig in [

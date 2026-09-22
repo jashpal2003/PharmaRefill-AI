@@ -80,9 +80,16 @@ export const ClinicalAuditFeed: React.FC<ClinicalAuditFeedProps> = ({
             <ShieldCheck className="h-4 w-4" />
             <span>Automated Clinical Compliance Audit</span>
           </div>
-          <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30">
-            LeMUR JSON Validated
-          </span>
+          {latestAudit ? (
+            <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 font-medium animate-pulse">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              Live LeMUR / LLM Audit
+            </span>
+          ) : (
+            <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
+              Standby Template (Awaiting Live Call Close)
+            </span>
+          )}
         </div>
 
         {/* Audit Meta Grid */}

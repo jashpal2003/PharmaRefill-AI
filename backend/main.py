@@ -11,7 +11,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Quer
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from backend.config import DB_PATH, PORT, HOST, PHARMACY_NAME, ACTIVE_STATION, FDA_WORD_BOOST
+from backend.config import DB_PATH, PORT, HOST, PHARMACY_NAME, ACTIVE_STATION, FDA_WORD_BOOST, CARTESIA_VOICE_ID, CARTESIA_API_KEY
 from backend.database import (
     init_db,
     get_patient,
@@ -22,7 +22,7 @@ from backend.database import (
 )
 from backend.state_machine import PharmacyStateMachine, AgentState, EscalationReason
 from backend.assemblyai_service import connect_assemblyai_realtime, run_lemur_clinical_audit
-from backend.tts_service import stream_cartesia_tts
+from backend.tts_service import stream_cartesia_tts, synthesize_cartesia_base64, synthesize_cartesia_audio, AVAILABLE_VOICES
 from backend.sms_service import send_pickup_confirmation_sms, send_snap_link_sms, get_outbox
 from evals.benchmark_eval import run_benchmark
 
@@ -224,7 +224,10 @@ async def handle_call_stream(websocket: WebSocket, session_id: str):
                 WHERE session_id = ?
             """, (json.dumps(audit_result), session_id))
             conn.commit()
-        await broadcast_to_dashboard("LEMUR_AUDIT_READY", audit_result)
+        await broadcast_to_dashboard("LEMUR_AUDIT_COMPLETED", {
+            "session_id": session_id,
+            "audit": audit_result
+        })
 
 # -------------------------------------------------------------
 # REST API Endpoints
@@ -309,15 +312,51 @@ def export_fhir(patient_id: str):
         entries.append({"resource": {"resourceType": "MedicationRequest", "id": item["rx_number"], "medication": item["drug_name"]}})
     return {"resourceType": "Bundle", "type": "collection", "entry": entries}
 
+# -------------------------------------------------------------
+# Cartesia Voice & Audio Synthesis Endpoints
+# -------------------------------------------------------------
+@app.get("/api/tts/voices")
+def get_tts_voices():
+    return {
+        "active_voice_id": CARTESIA_VOICE_ID,
+        "is_cartesia_active": bool(CARTESIA_API_KEY and len(CARTESIA_API_KEY.strip()) > 5),
+        "engine": "Cartesia Sonic-2",
+        "voices": list(AVAILABLE_VOICES.values())
+    }
+
+class TtsSynthesizeReq(BaseModel):
+    text: str
+    voice_id: str = None
+    speed: float = 0.92
+
+@app.post("/api/tts/synthesize")
+async def tts_synthesize(req: TtsSynthesizeReq):
+    voice = req.voice_id or CARTESIA_VOICE_ID
+    audio_b64 = await synthesize_cartesia_base64(req.text, voice_id=voice, speed=req.speed)
+    voice_info = AVAILABLE_VOICES.get(voice, {"name": "Cartesia Voice"})
+    return {
+        "audio_base64": audio_b64,
+        "is_cartesia": bool(audio_b64),
+        "engine": "Cartesia Sonic-2" if audio_b64 else "Browser Fallback",
+        "voice_id": voice,
+        "voice_name": voice_info.get("name", "Skylar - Friendly Guide")
+    }
+
+# -------------------------------------------------------------
 # Interactive Browser Simulation Endpoint
+# -------------------------------------------------------------
 class SimulateStepReq(BaseModel):
     session_id: str
     caller_phone: str = "+14155550192"
     utterance: str
+    voice_id: str = None
 
 @app.post("/api/call/simulate-step")
 async def simulate_call_step(req: SimulateStepReq):
     session_id = req.session_id
+    target_voice = req.voice_id or CARTESIA_VOICE_ID
+    voice_meta = AVAILABLE_VOICES.get(target_voice, {"name": "Skylar - Friendly Guide"})
+
     if session_id not in ACTIVE_SESSIONS:
         sm = PharmacyStateMachine(session_id, req.caller_phone, DB_PATH)
         ACTIVE_SESSIONS[session_id] = {
@@ -361,6 +400,11 @@ async def simulate_call_step(req: SimulateStepReq):
     spoken = fsm_res.get("spoken_text", "")
     session_ctx["transcript_log"].append(f"Agent: {spoken}")
 
+    # Synthesize live speech via Cartesia Sonic-2
+    audio_base64 = None
+    if spoken:
+        audio_base64 = await synthesize_cartesia_base64(spoken, voice_id=target_voice, speed=0.92)
+
     # Alerts
     if fsm_res.get("escalation_reason") == EscalationReason.DEA_CONTROLLED_SUBSTANCE.value:
         await broadcast_to_dashboard("DEA_BLOCK_ALERT", {
@@ -391,7 +435,10 @@ async def simulate_call_step(req: SimulateStepReq):
         "is_escalation": fsm_res.get("is_escalation"),
         "escalation_reason": fsm_res.get("escalation_reason"),
         "total_copay": sm.total_copay,
-        "synced_medications": sm.synced_medications
+        "synced_medications": sm.synced_medications,
+        "audio_base64": audio_base64,
+        "tts_engine": "Cartesia Sonic-2 (Live)" if audio_base64 else "Browser Fallback",
+        "voice_name": voice_meta.get("name", "Skylar - Friendly Guide")
     })
 
     # If call concluded or escalated -> Run LeMUR Clinical Audit
@@ -411,7 +458,11 @@ async def simulate_call_step(req: SimulateStepReq):
         "is_escalation": fsm_res.get("is_escalation"),
         "escalation_reason": fsm_res.get("escalation_reason"),
         "tokens": tokens,
-        "lemur_audit": audit_data
+        "lemur_audit": audit_data,
+        "audio_base64": audio_base64,
+        "tts_engine": "Cartesia Sonic-2 (Live)" if audio_base64 else "Browser Fallback",
+        "voice_id": target_voice,
+        "voice_name": voice_meta.get("name", "Skylar - Friendly Guide")
     }
 
 @app.post("/api/reset-demo")

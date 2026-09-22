@@ -1,7 +1,23 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Phone, PhoneOff, Mic, MicOff, Volume2, Sparkles, AlertTriangle, ShieldCheck, CheckCircle, ArrowRight, Play } from 'lucide-react';
+import {
+  X,
+  Phone,
+  PhoneOff,
+  Mic,
+  MicOff,
+  Volume2,
+  Sparkles,
+  AlertTriangle,
+  ShieldCheck,
+  CheckCircle,
+  ArrowRight,
+  Play,
+  RotateCcw,
+  VolumeX,
+  Activity
+} from 'lucide-react';
 
 interface InteractivePhoneModalProps {
   isOpen: boolean;
@@ -70,24 +86,114 @@ export const InteractivePhoneModal: React.FC<InteractivePhoneModalProps> = ({
   const [stepIndex, setStepIndex] = useState(0);
   const [isProcessing, setIsProcessing] = useState(false);
   const [spokenResponse, setSpokenResponse] = useState<string>('');
-  const [callLog, setCallLog] = useState<Array<{ speaker: string; text: string }>>([]);
+  const [callLog, setCallLog] = useState<Array<{ speaker: string; text: string; audioBase64?: string }>>([]);
   const [isVoiceMuted, setIsVoiceMuted] = useState(false);
   const [customInput, setCustomInput] = useState('');
   const [isListeningMic, setIsListeningMic] = useState(false);
+  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  const [ttsEngineNotice, setTtsEngineNotice] = useState<string>('Cartesia Sonic-2 (Live)');
+  const [selectedVoiceId, setSelectedVoiceId] = useState<string>('db6b0ed5-d5d3-463d-ae85-518a07d3c2b4');
+  const [voices, setVoices] = useState<Array<{ id: string; name: string; description: string }>>([
+    {
+      id: 'db6b0ed5-d5d3-463d-ae85-518a07d3c2b4',
+      name: 'Skylar - Friendly Guide',
+      description: 'Approachable female voice ideal for patient care and support.'
+    },
+    {
+      id: '9626c31c-bec5-4cca-baa8-f8ba9e84c8bc',
+      name: 'Jacqueline - Reassuring Agent',
+      description: 'Empathetic healthcare reassurance voice.'
+    },
+    {
+      id: '47c38ca4-5f35-497b-b1a3-415245fb35e1',
+      name: 'Daniel - Modern Assistant',
+      description: 'Clear, crisp male voice for clinical interactions.'
+    },
+    {
+      id: '694f9389-aac1-45b6-b726-9d9369183238',
+      name: 'Sarah - Mindful Woman',
+      description: 'Calm, gentle tone designed to comfort elderly callers.'
+    }
+  ]);
 
+  const audioPlayerRef = useRef<HTMLAudioElement | null>(null);
   const recognitionRef = useRef<any>(null);
 
-  // Initialize Web Speech API for Browser Voice Output
-  const speakText = (text: string) => {
+  // Fetch live configured voices from backend
+  useEffect(() => {
+    fetch('http://127.0.0.1:8000/api/tts/voices')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.voices && data.voices.length > 0) {
+          setVoices(data.voices);
+          if (data.active_voice_id) {
+            setSelectedVoiceId(data.active_voice_id);
+          }
+        }
+      })
+      .catch((err) => console.warn('Could not fetch voices:', err));
+  }, []);
+
+  // Stop any currently playing audio
+  const stopAudio = () => {
+    if (audioPlayerRef.current) {
+      audioPlayerRef.current.pause();
+      audioPlayerRef.current.currentTime = 0;
+    }
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    setIsPlayingAudio(false);
+  };
+
+  // Play audio using Cartesia Sonic-2 audio bytes, with browser WebSpeech as secondary fallback
+  const playAgentAudio = (audioBase64?: string, fallbackText?: string) => {
+    if (isVoiceMuted) return;
+
+    stopAudio();
+
+    if (audioBase64 && audioBase64.startsWith('data:audio/')) {
+      try {
+        const sound = new Audio(audioBase64);
+        audioPlayerRef.current = sound;
+        setIsPlayingAudio(true);
+
+        sound.onended = () => setIsPlayingAudio(false);
+        sound.onerror = (e) => {
+          console.warn('Cartesia audio playback error, falling back:', e);
+          setIsPlayingAudio(false);
+          if (fallbackText) speakBrowserFallback(fallbackText);
+        };
+
+        const playPromise = sound.play();
+        if (playPromise !== undefined) {
+          playPromise.catch((err) => {
+            console.warn('Autoplay prevented by browser:', err);
+            setIsPlayingAudio(false);
+            if (fallbackText) speakBrowserFallback(fallbackText);
+          });
+        }
+      } catch (err) {
+        console.warn('Sound instantiation failed:', err);
+        setIsPlayingAudio(false);
+        if (fallbackText) speakBrowserFallback(fallbackText);
+      }
+    } else if (fallbackText) {
+      speakBrowserFallback(fallbackText);
+    }
+  };
+
+  const speakBrowserFallback = (text: string) => {
     if (isVoiceMuted || typeof window === 'undefined' || !('speechSynthesis' in window)) return;
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.rate = 0.92; // Geriatric cadence
+    utterance.rate = 0.92;
     utterance.pitch = 1.0;
     window.speechSynthesis.speak(utterance);
   };
 
   const startCall = async (scenario = currentScenario) => {
+    stopAudio();
     const newSessionId = `CALL-${Date.now().toString().slice(-6)}`;
     setSessionId(newSessionId);
     setActiveCall(true);
@@ -103,13 +209,17 @@ export const InteractivePhoneModal: React.FC<InteractivePhoneModalProps> = ({
         body: JSON.stringify({
           session_id: newSessionId,
           caller_phone: '+14155550192',
-          utterance: ''
+          utterance: '',
+          voice_id: selectedVoiceId
         })
       });
       const data = await res.json();
       setSpokenResponse(data.spoken_text);
-      setCallLog([{ speaker: 'AGENT', text: data.spoken_text }]);
-      speakText(data.spoken_text);
+      if (data.tts_engine) {
+        setTtsEngineNotice(data.tts_engine);
+      }
+      setCallLog([{ speaker: 'AGENT', text: data.spoken_text, audioBase64: data.audio_base64 }]);
+      playAgentAudio(data.audio_base64, data.spoken_text);
     } catch (e) {
       console.error(e);
     } finally {
@@ -126,6 +236,7 @@ export const InteractivePhoneModal: React.FC<InteractivePhoneModalProps> = ({
 
   const sendUtterance = async (text: string) => {
     if (!text.trim()) return;
+    stopAudio();
     setIsProcessing(true);
     setCallLog((prev) => [...prev, { speaker: 'CALLER', text }]);
 
@@ -136,13 +247,20 @@ export const InteractivePhoneModal: React.FC<InteractivePhoneModalProps> = ({
         body: JSON.stringify({
           session_id: sessionId || `CALL-${Date.now().toString().slice(-6)}`,
           caller_phone: '+14155550192',
-          utterance: text
+          utterance: text,
+          voice_id: selectedVoiceId
         })
       });
       const data = await res.json();
       setSpokenResponse(data.spoken_text);
-      setCallLog((prev) => [...prev, { speaker: 'AGENT', text: data.spoken_text }]);
-      speakText(data.spoken_text);
+      if (data.tts_engine) {
+        setTtsEngineNotice(data.tts_engine);
+      }
+      setCallLog((prev) => [
+        ...prev,
+        { speaker: 'AGENT', text: data.spoken_text, audioBase64: data.audio_base64 }
+      ]);
+      playAgentAudio(data.audio_base64, data.spoken_text);
       onRefresh();
     } catch (e) {
       console.error(e);
@@ -152,17 +270,16 @@ export const InteractivePhoneModal: React.FC<InteractivePhoneModalProps> = ({
   };
 
   const endCall = () => {
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
+    stopAudio();
     setActiveCall(false);
     onRefresh();
   };
 
-  // Browser Microphone Capture (SpeechRecognition)
+  // Browser Microphone Capture
   const toggleMic = () => {
     if (typeof window === 'undefined') return;
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
       alert('Speech Recognition API not supported in this browser. Please use Chrome/Edge or click scenario buttons.');
       return;
@@ -199,32 +316,64 @@ export const InteractivePhoneModal: React.FC<InteractivePhoneModalProps> = ({
       <div className="relative w-full max-w-4xl bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl p-6 text-slate-100 max-h-[90vh] flex flex-col">
         {/* Modal Header */}
         <div className="flex items-center justify-between pb-4 border-b border-slate-800">
-          <div className="flex items-center gap-2">
-            <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
               <Phone className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-white">
-                Interactive Pharmacy Voice Agent Simulator
-              </h2>
+              <div className="flex items-center gap-2">
+                <h2 className="text-base font-bold text-white">
+                  Interactive Pharmacy Voice Agent Simulator
+                </h2>
+                <span className="flex items-center gap-1 text-[11px] font-mono px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                  <Sparkles className="h-3 w-3" />
+                  Cartesia Sonic-2 Live
+                </span>
+              </div>
               <p className="text-xs text-slate-400">
-                Test live turn-taking, Word Boost snapping, Med-Sync logic, and clinical emergency routes.
+                Test live conversational turn-taking with Cartesia ultra-low latency TTS and AssemblyAI LeMUR audit.
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
+            {/* Cartesia Voice Selector */}
+            <div className="flex items-center gap-1.5 bg-slate-950/80 border border-slate-800 px-2.5 py-1 rounded-lg">
+              <span className="text-[10px] uppercase font-semibold text-slate-400">Voice:</span>
+              <select
+                value={selectedVoiceId}
+                onChange={(e) => setSelectedVoiceId(e.target.value)}
+                className="bg-transparent text-xs text-emerald-400 font-medium focus:outline-none cursor-pointer"
+              >
+                {voices.map((v) => (
+                  <option key={v.id} value={v.id} className="bg-slate-900 text-white">
+                    {v.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Mute Button */}
             <button
-              onClick={() => setIsVoiceMuted(!isVoiceMuted)}
+              onClick={() => {
+                if (!isVoiceMuted) stopAudio();
+                setIsVoiceMuted(!isVoiceMuted);
+              }}
               className={`p-2 rounded-lg border text-xs transition cursor-pointer ${
-                isVoiceMuted ? 'bg-slate-800 text-slate-500 border-slate-700' : 'bg-emerald-950/60 text-emerald-300 border-emerald-700/50'
+                isVoiceMuted
+                  ? 'bg-rose-950/40 text-rose-300 border-rose-700/50'
+                  : 'bg-emerald-950/60 text-emerald-300 border-emerald-700/50'
               }`}
               title={isVoiceMuted ? 'Unmute Agent Voice' : 'Mute Agent Voice'}
             >
-              <Volume2 className="h-4 w-4" />
+              {isVoiceMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
             </button>
+
             <button
-              onClick={() => { endCall(); onClose(); }}
+              onClick={() => {
+                endCall();
+                onClose();
+              }}
               className="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white transition cursor-pointer"
             >
               <X className="h-5 w-5" />
@@ -237,7 +386,7 @@ export const InteractivePhoneModal: React.FC<InteractivePhoneModalProps> = ({
           {/* Left Column: Preset Clinical Scenarios */}
           <div className="space-y-3 overflow-y-auto pr-1">
             <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-2">
-              1. Select Hackathon Scenario
+              1. Select Clinical Scenario
             </span>
             {DEMO_SCENARIOS.map((sc) => {
               const isSelected = currentScenario.id === sc.id;
@@ -257,7 +406,9 @@ export const InteractivePhoneModal: React.FC<InteractivePhoneModalProps> = ({
                   <div className="flex items-center justify-between mb-1">
                     <span className="text-xs font-bold text-white">{sc.title}</span>
                   </div>
-                  <span className={`text-[10px] font-mono px-2 py-0.5 rounded border inline-block mb-1.5 ${sc.badgeColor}`}>
+                  <span
+                    className={`text-[10px] font-mono px-2 py-0.5 rounded border inline-block mb-1.5 ${sc.badgeColor}`}
+                  >
                     {sc.badge}
                   </span>
                   <p className="text-[11px] text-slate-400 leading-relaxed line-clamp-3">
@@ -273,10 +424,22 @@ export const InteractivePhoneModal: React.FC<InteractivePhoneModalProps> = ({
             {/* Call State Bar */}
             <div className="flex items-center justify-between pb-3 border-b border-slate-800/80 mb-3">
               <div className="flex items-center gap-2">
-                <span className={`h-2.5 w-2.5 rounded-full ${activeCall ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'}`} />
+                <span
+                  className={`h-2.5 w-2.5 rounded-full ${
+                    activeCall ? 'bg-emerald-400 animate-pulse' : 'bg-slate-600'
+                  }`}
+                />
                 <span className="text-xs font-mono text-slate-300">
                   {activeCall ? `Active Call: ${sessionId}` : 'Call Disconnected'}
                 </span>
+
+                {/* Audio Playing Indicator */}
+                {isPlayingAudio && (
+                  <div className="flex items-center gap-1 px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-mono">
+                    <Activity className="h-3 w-3 animate-pulse" />
+                    <span>Speaking (Cartesia)...</span>
+                  </div>
+                )}
               </div>
 
               {activeCall ? (
@@ -309,15 +472,27 @@ export const InteractivePhoneModal: React.FC<InteractivePhoneModalProps> = ({
                 callLog.map((log, i) => (
                   <div
                     key={i}
-                    className={`p-3 rounded-xl border ${
+                    className={`p-3 rounded-xl border relative ${
                       log.speaker === 'CALLER'
                         ? 'bg-slate-900 border-slate-700 text-cyan-100 ml-6'
                         : 'bg-emerald-950/25 border-emerald-600/40 text-emerald-100 mr-6'
                     }`}
                   >
-                    <span className="text-[10px] font-semibold text-slate-400 block mb-1">
-                      {log.speaker === 'CALLER' ? 'Caller (Eleanor)' : 'PharmaRefill AI (0.92x Paced Voice)'}
-                    </span>
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[10px] font-semibold text-slate-400">
+                        {log.speaker === 'CALLER' ? 'Caller (Eleanor)' : 'PharmaRefill AI (Cartesia Sonic-2)'}
+                      </span>
+                      {log.speaker === 'AGENT' && log.audioBase64 && (
+                        <button
+                          onClick={() => playAgentAudio(log.audioBase64, log.text)}
+                          className="flex items-center gap-1 text-[10px] text-emerald-400 hover:text-emerald-300 font-mono transition cursor-pointer"
+                          title="Replay Cartesia Voice Audio"
+                        >
+                          <RotateCcw className="h-3 w-3" />
+                          <span>Replay Audio</span>
+                        </button>
+                      )}
+                    </div>
                     <p className="leading-relaxed">{log.text}</p>
                   </div>
                 ))
@@ -325,7 +500,7 @@ export const InteractivePhoneModal: React.FC<InteractivePhoneModalProps> = ({
               {isProcessing && (
                 <div className="text-xs text-slate-400 italic p-2 flex items-center gap-2">
                   <span className="h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
-                  Orchestrating state machine & clinical checks...
+                  Synthesizing Cartesia voice & running state transitions...
                 </div>
               )}
             </div>

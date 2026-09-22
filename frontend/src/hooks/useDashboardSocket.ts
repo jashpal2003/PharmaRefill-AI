@@ -126,8 +126,11 @@ export function useDashboardSocket() {
               break;
 
             case 'LEMUR_AUDIT_COMPLETED':
-              if (data.audit) {
+            case 'LEMUR_AUDIT_READY':
+              if (data?.audit) {
                 setLatestAudit(data.audit);
+              } else if (data) {
+                setLatestAudit(data);
               }
               break;
 
