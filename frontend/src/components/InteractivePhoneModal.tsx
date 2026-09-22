@@ -92,7 +92,7 @@ export const InteractivePhoneModal: React.FC<InteractivePhoneModalProps> = ({
   const [isListeningMic, setIsListeningMic] = useState(false);
   const [isPlayingAudio, setIsPlayingAudio] = useState(false);
   const [ttsEngineNotice, setTtsEngineNotice] = useState<string>('Cartesia Sonic-2 (Live)');
-  const [selectedVoiceId, setSelectedVoiceId] = useState<string>('db6b0ed5-d5d3-463d-ae85-518a07d3c2b4');
+  const [selectedVoiceId, setSelectedVoiceId] = useState<string>('47c38ca4-5f35-497b-b1a3-415245fb35e1');
   const [voices, setVoices] = useState<Array<{ id: string; name: string; description: string }>>([
     {
       id: 'db6b0ed5-d5d3-463d-ae85-518a07d3c2b4',
