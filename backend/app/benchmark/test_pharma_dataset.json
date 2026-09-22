@@ -1,0 +1,177 @@
+[
+  {
+    "id": 1,
+    "ground_truth": "Please refill my Atorvastatin Calcium twenty milligrams prescription.",
+    "baseline_stt": "Please refill my a tour of a statin calcium 20 mg prescription.",
+    "boosted_stt": "Please refill my Atorvastatin Calcium 20 milligrams prescription.",
+    "target_drugs": ["Atorvastatin Calcium"]
+  },
+  {
+    "id": 2,
+    "ground_truth": "I need Hydrochlorothiazide twenty-five milligrams for high blood pressure.",
+    "baseline_stt": "I need hydro chlorine thiazide 25 milligrams for high blood pressure.",
+    "boosted_stt": "I need Hydrochlorothiazide 25 milligrams for high blood pressure.",
+    "target_drugs": ["Hydrochlorothiazide"]
+  },
+  {
+    "id": 3,
+    "ground_truth": "Can you prepare my Metformin Hydrochloride five hundred milligram tablets?",
+    "baseline_stt": "Can you prepare my met form in hydro chloride 500 milligram tablets?",
+    "boosted_stt": "Can you prepare my Metformin Hydrochloride 500 milligram tablets?",
+    "target_drugs": ["Metformin Hydrochloride"]
+  },
+  {
+    "id": 4,
+    "ground_truth": "My doctor increased my Lisinopril to twenty milligrams daily.",
+    "baseline_stt": "My doctor increased my listen oh pril to 20 milligrams daily.",
+    "boosted_stt": "My doctor increased my Lisinopril to 20 milligrams daily.",
+    "target_drugs": ["Lisinopril"]
+  },
+  {
+    "id": 5,
+    "ground_truth": "Do you have Levothyroxine Sodium eighty-eight micrograms in stock?",
+    "baseline_stt": "Do you have levo thigh rox seen sodium 88 micrograms in stock?",
+    "boosted_stt": "Do you have Levothyroxine Sodium 88 micrograms in stock?",
+    "target_drugs": ["Levothyroxine Sodium"]
+  },
+  {
+    "id": 6,
+    "ground_truth": "I am calling to refill Singulair which is Montelukast Sodium.",
+    "baseline_stt": "I am calling to refill sing you lair which is monte loo cast sodium.",
+    "boosted_stt": "I am calling to refill Singulair which is Montelukast Sodium.",
+    "target_drugs": ["Singulair", "Montelukast Sodium"]
+  },
+  {
+    "id": 7,
+    "ground_truth": "I need my Metoprolol Succinate extended-release fifty milligrams.",
+    "baseline_stt": "I need my metal pro lol suck senate extended-release 50 milligrams.",
+    "boosted_stt": "I need my Metoprolol Succinate extended-release 50 milligrams.",
+    "target_drugs": ["Metoprolol Succinate"]
+  },
+  {
+    "id": 8,
+    "ground_truth": "Please check if my Omeprazole delayed-release capsules are ready.",
+    "baseline_stt": "Please check if my oh meep raw zol delayed release capsules are ready.",
+    "boosted_stt": "Please check if my Omeprazole delayed-release capsules are ready.",
+    "target_drugs": ["Omeprazole"]
+  },
+  {
+    "id": 9,
+    "ground_truth": "My cardiologist prescribed Rosuvastatin ten milligrams Crestor.",
+    "baseline_stt": "My cardiologist prescribed rose you va statin 10 milligrams crest or.",
+    "boosted_stt": "My cardiologist prescribed Rosuvastatin 10 milligrams Crestor.",
+    "target_drugs": ["Rosuvastatin", "Crestor"]
+  },
+  {
+    "id": 10,
+    "ground_truth": "I also take Amlodipine Besylate five milligrams every morning.",
+    "baseline_stt": "I also take am low dip seen bessie late 5 milligrams every morning.",
+    "boosted_stt": "I also take Amlodipine Besylate 5 milligrams every morning.",
+    "target_drugs": ["Amlodipine Besylate"]
+  },
+  {
+    "id": 11,
+    "ground_truth": "Can I synchronize Gabapentin three hundred milligrams with my other pills?",
+    "baseline_stt": "Can I synchronize gaba pen tin 300 milligrams with my other pills?",
+    "boosted_stt": "Can I synchronize Gabapentin 300 milligrams with my other pills?",
+    "target_drugs": ["Gabapentin"]
+  },
+  {
+    "id": 12,
+    "ground_truth": "I need a refill on Sertraline Hydrochloride fifty milligrams Zoloft.",
+    "baseline_stt": "I need a refill on sir tra leen hydro chloride 50 milligrams zoe loft.",
+    "boosted_stt": "I need a refill on Sertraline Hydrochloride 50 milligrams Zoloft.",
+    "target_drugs": ["Sertraline Hydrochloride", "Zoloft"]
+  },
+  {
+    "id": 13,
+    "ground_truth": "The prescription is for Pantoprazole Sodium forty milligrams Protonix.",
+    "baseline_stt": "The prescription is for pan top raw zol sodium 40 milligrams pro ton ics.",
+    "boosted_stt": "The prescription is for Pantoprazole Sodium 40 milligrams Protonix.",
+    "target_drugs": ["Pantoprazole Sodium", "Protonix"]
+  },
+  {
+    "id": 14,
+    "ground_truth": "I need an urgent refill of Albuterol Sulfate inhalation aerosol ProAir.",
+    "baseline_stt": "I need an urgent refill of al beauty rawl sulfate inhalation aerosol pro air.",
+    "boosted_stt": "I need an urgent refill of Albuterol Sulfate inhalation aerosol ProAir.",
+    "target_drugs": ["Albuterol Sulfate", "ProAir"]
+  },
+  {
+    "id": 15,
+    "ground_truth": "I take Furosemide twenty milligrams Lasix for water retention.",
+    "baseline_stt": "I take few roe se my de 20 milligrams lay six for water retention.",
+    "boosted_stt": "I take Furosemide 20 milligrams Lasix for water retention.",
+    "target_drugs": ["Furosemide", "Lasix"]
+  },
+  {
+    "id": 16,
+    "ground_truth": "Refill Duloxetine delayed release thirty milligrams Cymbalta please.",
+    "baseline_stt": "Refill dew lox eh teen delayed release 30 milligrams sim ball ta please.",
+    "boosted_stt": "Refill Duloxetine delayed release 30 milligrams Cymbalta please.",
+    "target_drugs": ["Duloxetine", "Cymbalta"]
+  },
+  {
+    "id": 17,
+    "ground_truth": "Is my Tamsulosin Hydrochloride zero point four milligrams Flomax ready?",
+    "baseline_stt": "Is my tam sue low sin hydro chloride 0.4 milligrams flow max ready?",
+    "boosted_stt": "Is my Tamsulosin Hydrochloride 0.4 milligrams Flomax ready?",
+    "target_drugs": ["Tamsulosin Hydrochloride", "Flomax"]
+  },
+  {
+    "id": 18,
+    "ground_truth": "I need Escitalopram Oxalate ten milligrams Lexapro.",
+    "baseline_stt": "I need ess sit tallow pram ox a late 10 milligrams lex pro.",
+    "boosted_stt": "I need Escitalopram Oxalate 10 milligrams Lexapro.",
+    "target_drugs": ["Escitalopram Oxalate", "Lexapro"]
+  },
+  {
+    "id": 19,
+    "ground_truth": "Doctor called in Clopidogrel seventy-five milligrams Plavix.",
+    "baseline_stt": "Doctor called in claw pee doe grel 75 milligrams play vix.",
+    "boosted_stt": "Doctor called in Clopidogrel 75 milligrams Plavix.",
+    "target_drugs": ["Clopidogrel", "Plavix"]
+  },
+  {
+    "id": 20,
+    "ground_truth": "I want to refill Spironolactone twenty-five milligrams Aldactone.",
+    "baseline_stt": "I want to refill spy row no lack tone 25 milligrams al dac tone.",
+    "boosted_stt": "I want to refill Spironolactone 25 milligrams Aldactone.",
+    "target_drugs": ["Spironolactone", "Aldactone"]
+  },
+  {
+    "id": 21,
+    "ground_truth": "The doctor prescribed Meloxicam fifteen milligrams Mobic for arthritis.",
+    "baseline_stt": "The doctor prescribed mellow zick am 15 milligrams mo bick for arthritis.",
+    "boosted_stt": "The doctor prescribed Meloxicam 15 milligrams Mobic for arthritis.",
+    "target_drugs": ["Meloxicam", "Mobic"]
+  },
+  {
+    "id": 22,
+    "ground_truth": "I need to refill Bupropion Hydrochloride one hundred fifty milligrams Wellbutrin.",
+    "baseline_stt": "I need to refill byoo pro pee on hydro chloride 150 milligrams well byoo trin.",
+    "boosted_stt": "I need to refill Bupropion Hydrochloride 150 milligrams Wellbutrin.",
+    "target_drugs": ["Bupropion Hydrochloride", "Wellbutrin"]
+  },
+  {
+    "id": 23,
+    "ground_truth": "Please check my prescription for Allopurinol one hundred milligrams Zyloprim.",
+    "baseline_stt": "Please check my prescription for al low pure in all 100 milligrams zye low prim.",
+    "boosted_stt": "Please check my prescription for Allopurinol 100 milligrams Zyloprim.",
+    "target_drugs": ["Allopurinol", "Zyloprim"]
+  },
+  {
+    "id": 24,
+    "ground_truth": "Is my Doxycycline Hyclate one hundred milligrams ready for pickup?",
+    "baseline_stt": "Is my dox ee sigh clean high clate 100 milligrams ready for pickup?",
+    "boosted_stt": "Is my Doxycycline Hyclate 100 milligrams ready for pickup?",
+    "target_drugs": ["Doxycycline Hyclate"]
+  },
+  {
+    "id": 25,
+    "ground_truth": "I am calling to request my Oxycodone-Acetaminophen Schedule II controlled refill.",
+    "baseline_stt": "I am calling to request my oxy co done a set a min o fen schedule to controlled refill.",
+    "boosted_stt": "I am calling to request my Oxycodone-Acetaminophen Schedule II controlled refill.",
+    "target_drugs": ["Oxycodone-Acetaminophen"]
+  }
+]
