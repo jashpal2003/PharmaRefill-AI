@@ -4,6 +4,8 @@ and instant audio buffer clearing for barge-in interruptions.
 """
 
 import os
+import json
+import base64
 import aiohttp
 import asyncio
 from typing import Optional
@@ -25,7 +27,7 @@ async def stream_cartesia_tts(text: str, audio_out_queue: asyncio.Queue, cancel_
         }
         
         payload = {
-            "model_id": "sonic-english",
+            "model_id": "sonic-2",
             "transcript": text,
             "voice": {
                 "mode": "id",
@@ -44,12 +46,23 @@ async def stream_cartesia_tts(text: str, audio_out_queue: asyncio.Queue, cancel_
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, headers=headers, json=payload) as resp:
-                    async for chunk in resp.content.iter_chunked(1024):
-                        if cancel_event.is_set():
-                            # Interruption / Barge-In triggered -> Drop remaining audio immediately
-                            break
-                        await audio_out_queue.put(chunk)
-            return
+                    if resp.status == 200:
+                        async for line in resp.content:
+                            if cancel_event.is_set():
+                                # Interruption / Barge-In triggered -> Drop remaining audio immediately
+                                break
+                            line_str = line.decode('utf-8', errors='ignore').strip()
+                            if line_str.startswith('data:'):
+                                raw_data = line_str[5:].strip()
+                                if raw_data:
+                                    try:
+                                        parsed = json.loads(raw_data)
+                                        if 'data' in parsed and parsed['data']:
+                                            pcm = base64.b64decode(parsed['data'])
+                                            await audio_out_queue.put(pcm)
+                                    except Exception:
+                                        pass
+                        return
         except Exception as e:
             pass
 

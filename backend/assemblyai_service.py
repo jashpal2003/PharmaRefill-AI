@@ -35,44 +35,71 @@ async def connect_assemblyai_realtime(
     audio_queue: asyncio.Queue,
     on_transcript_received: Callable[[str, bool], Any]
 ):
-    """Establishes real-time streaming WebSocket with AssemblyAI."""
-    url = "wss://api.assemblyai.com/v2/realtime/ws?sample_rate=16000"
+    """Establishes real-time streaming WebSocket with AssemblyAI v3 Universal Streaming."""
+    if not ASSEMBLYAI_API_KEY or len(ASSEMBLYAI_API_KEY.strip()) < 5:
+        while True:
+            chunk = await audio_queue.get()
+            if chunk is None:
+                break
+        return
+
+    url = "wss://streaming.assemblyai.com/v3/ws?sample_rate=16000"
     headers = {"Authorization": ASSEMBLYAI_API_KEY}
 
     try:
-        async with websockets.connect(url, extra_headers=headers) as ws:
-            # Initialize with Word Boost configuration
-            init_message = {
-                "audio_data": None,
-                "word_boost": json.dumps(FDA_WORD_BOOST),
-                "punctuate": True,
-                "format_text": True
+        async with websockets.connect(url, additional_headers=headers) as ws:
+            # 1. Receive Begin handshake
+            begin_raw = await ws.recv()
+            begin_data = json.loads(begin_raw)
+
+            # 2. Configure session with FDA Top 250 Keyterms & Domain Prompt
+            config_message = {
+                "type": "UpdateConfiguration",
+                "keyterms_prompt": FDA_WORD_BOOST,
+                "prompt": "Community care retail outpatient pharmacy patient prescription triage and refills."
             }
-            await ws.send(json.dumps(init_message))
+            await ws.send(json.dumps(config_message))
 
             async def send_audio_worker():
                 while True:
                     chunk = await audio_queue.get()
                     if chunk is None:
+                        try:
+                            await ws.send(json.dumps({"type": "Terminate"}))
+                        except Exception:
+                            pass
                         break
-                    await ws.send(json.dumps({"audio_data": chunk}))
+                    if isinstance(chunk, bytes):
+                        await ws.send(chunk)
+                    elif isinstance(chunk, str):
+                        try:
+                            await ws.send(chunk.encode("latin1"))
+                        except Exception:
+                            pass
 
             async def receive_transcripts_worker():
                 while True:
                     try:
                         raw_msg = await ws.recv()
                         data = json.loads(raw_msg)
-                        if "text" in data and data["text"]:
-                            is_final = data.get("message_type") == "FinalTranscript"
-                            res = on_transcript_received(data["text"], is_final)
-                            if asyncio.iscoroutine(res):
-                                await res
+                        msg_type = data.get("type")
+                        if msg_type == "Turn":
+                            text = data.get("transcript", "")
+                            if text:
+                                is_final = data.get("turn_is_formatted", False) or data.get("end_of_turn", False)
+                                res = on_transcript_received(text, is_final)
+                                if asyncio.iscoroutine(res):
+                                    await res
+                        elif msg_type == "Termination":
+                            break
                     except websockets.exceptions.ConnectionClosed:
+                        break
+                    except Exception:
                         break
 
             await asyncio.gather(send_audio_worker(), receive_transcripts_worker())
     except Exception as e:
-        # If no active API key or offline, fallback to simulation queue draining
+        # Fallback queue drain
         while True:
             chunk = await audio_queue.get()
             if chunk is None:

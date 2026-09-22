@@ -172,26 +172,59 @@ async def handle_call_stream(websocket: WebSocket, session_id: str):
     # Spawn AssemblyAI real-time receiver task
     aai_task = asyncio.create_task(connect_assemblyai_realtime(inbound_audio_queue, on_transcript_received))
 
-    try:
-        while True:
-            # Receive incoming audio packets from caller
-            raw_bytes = await websocket.receive_bytes()
-            await inbound_audio_queue.put(raw_bytes)
-            
-            # Flush outbound TTS audio chunks back to caller
-            while not outbound_audio_queue.empty():
+    async def send_tts_worker():
+        try:
+            while True:
                 out_chunk = await outbound_audio_queue.get()
+                if out_chunk is None:
+                    break
                 await websocket.send_bytes(out_chunk)
-                
-    except WebSocketDisconnect:
-        await inbound_audio_queue.put(None)
-        aai_task.cancel()
-        
-        # Post-Call Intelligence: Run AssemblyAI LeMUR Clinical Audit
-        complete_transcript = "\n".join(full_transcript_log)
-        if complete_transcript:
-            audit_result = run_lemur_clinical_audit(complete_transcript)
-            await broadcast_to_dashboard("LEMUR_AUDIT_READY", audit_result)
+        except Exception:
+            pass
+
+    async def receive_inbound_worker():
+        try:
+            while True:
+                message = await websocket.receive()
+                if message.get("type") == "websocket.disconnect":
+                    break
+                if "bytes" in message and message["bytes"]:
+                    await inbound_audio_queue.put(message["bytes"])
+                elif "text" in message and message["text"]:
+                    try:
+                        cmd = json.loads(message["text"])
+                        if cmd.get("type") == "HANGUP":
+                            break
+                    except Exception:
+                        pass
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            pass
+        finally:
+            await inbound_audio_queue.put(None)
+            await outbound_audio_queue.put(None)
+
+    send_task = asyncio.create_task(send_tts_worker())
+    recv_task = asyncio.create_task(receive_inbound_worker())
+
+    await asyncio.gather(recv_task, return_exceptions=True)
+    send_task.cancel()
+    aai_task.cancel()
+
+    # Post-Call Intelligence: Run AssemblyAI LeMUR Clinical Audit
+    complete_transcript = "\n".join(full_transcript_log)
+    if complete_transcript:
+        audit_result = run_lemur_clinical_audit(complete_transcript)
+        with get_db_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                UPDATE call_sessions 
+                SET call_status = 'COMPLETED', ended_at = CURRENT_TIMESTAMP, lemur_audit_json = ?
+                WHERE session_id = ?
+            """, (json.dumps(audit_result), session_id))
+            conn.commit()
+        await broadcast_to_dashboard("LEMUR_AUDIT_READY", audit_result)
 
 # -------------------------------------------------------------
 # REST API Endpoints

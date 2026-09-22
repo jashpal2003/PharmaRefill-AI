@@ -18,8 +18,8 @@ def run():
     print("=" * 65)
     print("1. Launching FastAPI Real-Time Gateway on http://127.0.0.1:8000 ...")
     backend_process = subprocess.Popen(
-        [sys.executable, "run_server.py"],
-        cwd=BACKEND_DIR
+        [sys.executable, "-m", "uvicorn", "backend.main:app", "--reload", "--port", "8000"],
+        cwd=ROOT_DIR
     )
 
     time.sleep(2)
