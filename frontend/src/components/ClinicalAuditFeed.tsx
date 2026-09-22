@@ -2,7 +2,8 @@
 
 import React, { useState } from 'react';
 import { LeMURAudit } from '@/lib/types';
-import { ShieldAlert, AlertTriangle, FileText, CheckSquare, Printer, CheckCircle, Lock, Download, ShieldCheck } from 'lucide-react';
+import { FileText, CheckSquare, Printer, CheckCircle, Download, ShieldCheck } from 'lucide-react';
+import { EmergencyBanner } from './EmergencyBanner';
 
 interface ClinicalAuditFeedProps {
   deaAlert: { active: boolean; medication?: any; reason?: string };
@@ -69,39 +70,8 @@ export const ClinicalAuditFeed: React.FC<ClinicalAuditFeedProps> = ({
         </span>
       </div>
 
-      {/* Emergency Adverse Reaction Sentinel Alert (Pulsing Red) */}
-      {emergencyAlert.active && (
-        <div className="emergency-pulse bg-rose-950/80 border-2 border-rose-500 rounded-xl p-4 mb-4 text-rose-100">
-          <div className="flex items-center gap-2 text-sm font-bold text-rose-200 mb-1">
-            <AlertTriangle className="h-5 w-5 text-rose-400 animate-bounce" />
-            <span>CRITICAL CLINICAL ALERT: ANAPHYLAXIS SENTINEL</span>
-          </div>
-          <p className="text-xs text-rose-200 leading-relaxed">
-            {emergencyAlert.warning || 'Patient reported acute symptoms (tight throat / breathing distress). Automated processing halted; emergency warm transfer to on-duty pharmacist in progress.'}
-          </p>
-          <div className="mt-2 text-[11px] font-mono bg-rose-900/60 px-2 py-1 rounded text-rose-100 flex items-center justify-between">
-            <span>ACTION: PICK UP EMERGENCY EXTENSION 101</span>
-            <span className="font-bold underline cursor-pointer">TAKE OVER CALL NOW</span>
-          </div>
-        </div>
-      )}
-
-      {/* DEA Schedule II-V Controlled Substance Hard Intercept (Amber Banner) */}
-      {deaAlert.active && (
-        <div className="dea-pulse bg-amber-950/70 border-2 border-amber-500 rounded-xl p-4 mb-4 text-amber-100">
-          <div className="flex items-center gap-2 text-sm font-bold text-amber-300 mb-1">
-            <Lock className="h-5 w-5 text-amber-400" />
-            <span>DEA TITLE 21 CFR § 1306 SAFETY LOCK ACTIVATED</span>
-          </div>
-          <p className="text-xs text-amber-200 leading-relaxed">
-            Caller requested <span className="font-bold text-white">{deaAlert.medication?.drug_name || 'Oxycodone-Acetaminophen'}</span> (Schedule II C-II Controlled Substance). Autonomous voice dispensing strictly blocked. Order routed to licensed pharmacist queue.
-          </p>
-          <div className="mt-2 text-[11px] font-mono bg-amber-900/50 px-2.5 py-1 rounded text-amber-200 flex items-center justify-between">
-            <span>DISPENSE ORDER STATUS: BLOCKED_DEA_REVIEW</span>
-            <span className="font-bold">REQUIRES MD PHONE VERIFICATION</span>
-          </div>
-        </div>
-      )}
+      {/* Emergency Adverse Reaction Sentinel Alert & DEA Hard Intercept */}
+      <EmergencyBanner emergencyAlert={emergencyAlert} deaAlert={deaAlert} />
 
       {/* LeMUR Post-Call Audit Card */}
       <div className="bg-slate-900/80 rounded-xl p-4 border border-slate-800 mb-4">

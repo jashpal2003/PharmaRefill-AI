@@ -2,7 +2,8 @@
 
 import React from 'react';
 import { Patient, Prescription } from '@/lib/types';
-import { User, Pill, ShieldAlert, CheckCircle, Clock, Calendar, DollarSign, ShieldCheck, ArrowRight } from 'lucide-react';
+import { User, CheckCircle } from 'lucide-react';
+import { ActivePrescriptions } from './ActivePrescriptions';
 
 interface PatientAdjudicationProps {
   patient: Patient | null;
@@ -75,118 +76,13 @@ export const PatientAdjudication: React.FC<PatientAdjudicationProps> = ({
         </div>
       </div>
 
-      {/* Active Prescriptions Table */}
-      <div className="mb-4">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-            <Pill className="h-3.5 w-3.5 text-emerald-400" />
-            Active Prescriptions ({prescriptions.length || 4})
-          </span>
-          <span className="text-[11px] text-slate-400">Adjudication Feed</span>
-        </div>
-
-        <div className="space-y-2">
-          {prescriptions.map((rx) => {
-            const isControlled = rx.is_controlled_substance || rx.dea_schedule >= 2;
-            const isAtorvastatin = rx.drug_name.toLowerCase().includes('atorvastatin');
-            const isMedSync = rx.drug_name.toLowerCase().includes('metformin') || rx.drug_name.toLowerCase().includes('lisinopril');
-
-            return (
-              <div
-                key={rx.rx_number}
-                className={`p-3 rounded-xl border transition-all ${
-                  isControlled
-                    ? 'bg-amber-950/20 border-amber-500/40'
-                    : isAtorvastatin
-                    ? 'bg-emerald-950/25 border-emerald-500/40'
-                    : isMedSync
-                    ? 'bg-cyan-950/20 border-cyan-500/30'
-                    : 'bg-slate-900/60 border-slate-800'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold text-xs text-white">
-                        {rx.drug_name} {rx.strength}
-                      </span>
-                      {isControlled && (
-                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                          SCHEDULE II C-II
-                        </span>
-                      )}
-                      {isMedSync && (
-                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
-                          MED-SYNC CANDIDATE
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[11px] text-slate-400 flex items-center gap-3 mt-1">
-                      <span>Rx #: <span className="font-mono text-slate-300">{rx.rx_number}</span></span>
-                      <span>Refills: <span className="font-mono text-slate-200">{rx.refills_remaining}</span></span>
-                      <span>Due: <span className="font-mono text-slate-300">{rx.next_refill_due_date}</span></span>
-                    </div>
-                  </div>
-
-                  <div className="text-right">
-                    <span className="text-xs font-mono font-bold text-white block">
-                      ${Number(rx.copay_amount).toFixed(2)}
-                    </span>
-                    <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${
-                      rx.adjudication_status === 'APPROVED'
-                        ? 'bg-emerald-500/20 text-emerald-300'
-                        : 'bg-rose-500/20 text-rose-300'
-                    }`}>
-                      {rx.adjudication_status}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Proactive Med-Sync Discovery Card */}
-      <div className="bg-gradient-to-r from-teal-950/40 to-cyan-950/40 rounded-xl p-3.5 border border-teal-500/30 mb-4">
-        <div className="flex items-center justify-between text-xs text-teal-300 font-semibold mb-1.5">
-          <span className="flex items-center gap-1.5">
-            <Calendar className="h-3.5 w-3.5" />
-            Proactive Med-Sync Discovery Engine
-          </span>
-          <span className="text-[10px] px-2 py-0.5 rounded bg-teal-500/20 text-teal-200">
-            7-Day Window Analysis
-          </span>
-        </div>
-        <p className="text-xs text-slate-300 leading-relaxed">
-          Detected 2 chronic maintenance medications due within 6 days: <span className="font-semibold text-teal-200">Metformin HCl 500mg</span> and <span className="font-semibold text-teal-200">Lisinopril 10mg</span>. Synchronizing into a single Friday pickup eliminates 2 patient trips and eliminates Return-to-Stock waste.
-        </p>
-      </div>
-
-      {/* Adjudication Copay & Anti-RTS Commitment Summary */}
-      <div className="mt-auto bg-slate-900/90 rounded-xl p-4 border border-slate-800">
-        <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-xs">
-          <span className="text-slate-400">Total Pre-Adjudicated Out-of-Pocket:</span>
-          <span className="text-lg font-mono font-bold text-emerald-400">
-            ${(totalCopay > 0 ? totalCopay : 19.90).toFixed(2)}
-          </span>
-        </div>
-
-        <div className="mt-3 flex items-center justify-between text-xs">
-          <div className="flex items-center gap-1.5 text-slate-300">
-            <Clock className="h-3.5 w-3.5 text-cyan-400" />
-            <span>Anti-RTS Commitment Window:</span>
-          </div>
-          <span className="font-mono text-cyan-300 font-semibold">
-            {pickupSlot || 'Friday 3:00 PM - 6:00 PM'}
-          </span>
-        </div>
-
-        <div className="mt-2 text-[11px] text-slate-400 flex items-center justify-between">
-          <span>Return-to-Stock (RTS) Risk:</span>
-          <span className="text-emerald-400 font-bold">0% (Committed via Voice & SMS)</span>
-        </div>
-      </div>
+      {/* Active Prescriptions Table & Med-Sync Adjudication */}
+      <ActivePrescriptions
+        prescriptions={prescriptions}
+        totalCopay={totalCopay > 0 ? totalCopay : 19.90}
+        pickupSlot={pickupSlot}
+      />
     </div>
   );
 };
+
