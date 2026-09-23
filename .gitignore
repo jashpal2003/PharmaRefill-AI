@@ -34,3 +34,6 @@ yarn-error.log*
 Thumbs.db
 .vscode/
 .idea/
+*.db
+*.wav
+!evals/audio/*.wav

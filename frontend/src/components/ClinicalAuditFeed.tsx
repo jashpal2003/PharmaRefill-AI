@@ -1,14 +1,26 @@
 'use client';
 
 import React, { useState } from 'react';
-import { LeMURAudit } from '@/lib/types';
-import { FileText, CheckSquare, Printer, CheckCircle, Download, ShieldCheck } from 'lucide-react';
+import { LeMURAudit, DispenseOrder } from '@/lib/types';
+import {
+  FileText,
+  CheckSquare,
+  Printer,
+  CheckCircle,
+  Download,
+  ShieldCheck,
+  MessageSquare,
+  Package,
+  Sparkles,
+  QrCode
+} from 'lucide-react';
 import { EmergencyBanner } from './EmergencyBanner';
 
 interface ClinicalAuditFeedProps {
   deaAlert: { active: boolean; medication?: any; reason?: string };
   emergencyAlert: { active: boolean; warning?: string };
   latestAudit: LeMURAudit | null;
+  orders?: DispenseOrder[];
   onDispenseAll: () => void;
   onExportFhir: () => void;
 }
@@ -17,11 +29,13 @@ export const ClinicalAuditFeed: React.FC<ClinicalAuditFeedProps> = ({
   deaAlert,
   emergencyAlert,
   latestAudit,
+  orders = [],
   onDispenseAll,
   onExportFhir
 }) => {
   const [labelsPrinted, setLabelsPrinted] = useState(false);
   const [checkedItems, setCheckedItems] = useState<{ [idx: number]: boolean }>({});
+  const [showSmsPreview, setShowSmsPreview] = useState(false);
 
   const toggleCheck = (idx: number) => {
     setCheckedItems(prev => ({ ...prev, [idx]: !prev[idx] }));
@@ -32,41 +46,30 @@ export const ClinicalAuditFeed: React.FC<ClinicalAuditFeedProps> = ({
     setTimeout(() => setLabelsPrinted(false), 3000);
   };
 
-  // Fallback audit to demonstrate post-call intelligence if no live call has closed yet
   const defaultAudit: LeMURAudit = latestAudit || {
-    patient_full_name: 'Eleanor Vance',
-    patient_dob: '1958-04-12',
-    caller_phone: '+1 (415) XXX-0192',
-    consent_obtained: true,
-    adverse_reaction_detected: false,
+    patient_full_name: 'No completed call yet',
+    patient_dob: '',
+    consent_disclosed: false,
+    emergency_adverse_reaction_detected: false,
     adverse_reaction_summary: undefined,
-    medications_processed: [
-      { drug_name: 'Atorvastatin Calcium', strength: '20mg', action_performed: 'REFILL', controlled_substance_detected: false },
-      { drug_name: 'Metformin HCl', strength: '500mg', action_performed: 'MED_SYNC', controlled_substance_detected: false },
-      { drug_name: 'Lisinopril', strength: '10mg', action_performed: 'MED_SYNC', controlled_substance_detected: false }
-    ],
-    total_copay_disclosed: '$19.90',
-    pickup_commitment_slot: 'Friday 3:00 PM - 6:00 PM',
-    pharmacist_action_items: [
-      'Review Atorvastatin 20mg fill and verify no statin intolerance reported.',
-      'Stage Metformin 500mg and Lisinopril 10mg for synchronized Friday pickup bag.',
-      'Verify Medicare Part D co-pay pre-adjudication ($19.90 total).',
-      'Affix barcode label for drive-thru locker bin 4B.'
-    ]
+    medications_processed: [],
+    total_copay_disclosed: '—',
+    pickup_window_committed: '—',
+    pharmacist_action_items: []
   };
 
   return (
     <div className="flex flex-col h-full glass-panel rounded-2xl p-5 border border-slate-800 overflow-y-auto">
       {/* Panel Header */}
-      <div className="flex items-center justify-between pb-3 border-b border-slate-800/80 mb-4">
+      <div className="flex items-center justify-between pb-3 border-b border-slate-800/80 mb-3.5">
         <div className="flex items-center gap-2">
           <FileText className="h-4 w-4 text-emerald-400" />
           <h2 className="text-sm font-semibold tracking-wide uppercase text-slate-200">
-            Clinical Audit Feed (AssemblyAI LeMUR)
+            Clinical Compliance & Audit
           </h2>
         </div>
         <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300">
-          HIPAA Redacted
+          AssemblyAI LeMUR
         </span>
       </div>
 
@@ -74,7 +77,7 @@ export const ClinicalAuditFeed: React.FC<ClinicalAuditFeedProps> = ({
       <EmergencyBanner emergencyAlert={emergencyAlert} deaAlert={deaAlert} />
 
       {/* LeMUR Post-Call Audit Card */}
-      <div className="bg-slate-900/80 rounded-xl p-4 border border-slate-800 mb-4">
+      <div className="bg-slate-900/80 rounded-xl p-4 border border-slate-800 mb-3.5 shadow-sm">
         <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-xs mb-3">
           <div className="flex items-center gap-1.5 text-emerald-300 font-semibold">
             <ShieldCheck className="h-4 w-4" />
@@ -82,8 +85,8 @@ export const ClinicalAuditFeed: React.FC<ClinicalAuditFeedProps> = ({
           </div>
           {latestAudit ? (
             <span className="flex items-center gap-1 text-[10px] px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/50 font-medium animate-pulse">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-              Live LeMUR / LLM Audit
+              <Sparkles className="h-3 w-3" />
+              Post-Call LLM Audit
             </span>
           ) : (
             <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">
@@ -109,8 +112,8 @@ export const ClinicalAuditFeed: React.FC<ClinicalAuditFeedProps> = ({
             <span className="font-mono text-cyan-300 font-bold">{defaultAudit.total_copay_disclosed}</span>
           </div>
           <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80">
-            <span className="text-slate-400 block text-[10px]">Anti-RTS Commitment</span>
-            <span className="font-mono text-teal-300">{defaultAudit.pickup_commitment_slot}</span>
+            <span className="text-slate-400 block text-[10px]">Anti-RTS Window</span>
+            <span className="font-mono text-teal-300">{defaultAudit.pickup_window_committed}</span>
           </div>
         </div>
 
@@ -130,13 +133,13 @@ export const ClinicalAuditFeed: React.FC<ClinicalAuditFeedProps> = ({
                   <span className="text-[10px] text-slate-400">{m.strength}</span>
                 </div>
                 <span className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                  m.controlled_substance_detected
+                  m.is_controlled
                     ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                    : m.action_performed === 'MED_SYNC'
-                    ? 'bg-cyan-500/20 text-cyan-300'
+                    : m.action_type === 'MED_SYNC'
+                    ? 'bg-teal-500/20 text-teal-300'
                     : 'bg-emerald-500/20 text-emerald-300'
                 }`}>
-                  {m.action_performed}
+                  {m.action_type}
                 </span>
               </div>
             ))}
@@ -173,6 +176,28 @@ export const ClinicalAuditFeed: React.FC<ClinicalAuditFeedProps> = ({
             })}
           </div>
         </div>
+      </div>
+
+      {/* Customer SMS Dispatch Simulation Card */}
+      <div className="bg-slate-900/60 rounded-xl p-3 border border-slate-800 mb-3 text-xs">
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="font-bold text-slate-200 flex items-center gap-1.5">
+            <MessageSquare className="h-3.5 w-3.5 text-cyan-400" />
+            Two-Way Patient SMS Confirmation
+          </span>
+          <button
+            onClick={() => setShowSmsPreview(!showSmsPreview)}
+            className="text-[10px] text-cyan-400 hover:text-cyan-300 font-mono underline cursor-pointer"
+          >
+            {showSmsPreview ? 'Hide Preview' : 'View Message'}
+          </button>
+        </div>
+        {showSmsPreview && (
+          <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 mt-2 font-mono text-[11px] text-slate-300 space-y-1">
+            <p className="text-emerald-400 font-semibold">Community Care Pharmacy:</p>
+            <p>{latestAudit ? `Hi ${(latestAudit.patient_full_name || 'there').split(' ')[0]}, your order is confirmed for ${latestAudit.pickup_window_committed || 'pickup'}. Estimated copay: ${latestAudit.total_copay_disclosed || 'n/a'}.` : 'No confirmation message has been sent in this session.'}</p>
+          </div>
+        )}
       </div>
 
       {/* Pharmacist Operations Toolbar */}

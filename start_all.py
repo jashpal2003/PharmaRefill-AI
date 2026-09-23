@@ -14,7 +14,7 @@ FRONTEND_DIR = os.path.join(ROOT_DIR, "frontend")
 
 def run():
     print("=" * 65)
-    print("PHARMAREFILL AI (RxTriage) — UNIFIED LAUNCHER")
+    print("RxTriage AI — UNIFIED LAUNCHER")
     print("=" * 65)
     print("1. Launching FastAPI Real-Time Gateway on http://127.0.0.1:8000 ...")
     backend_process = subprocess.Popen(

@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Radio, CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, ShieldCheck, PhoneCall, Wifi, Radio } from 'lucide-react';
 import { TranscriptMessage, TokenItem } from '@/lib/types';
 import { AudioWaveform } from './AudioWaveform';
 import { TranscriptFeed } from './TranscriptFeed';
@@ -23,57 +23,123 @@ export const LiveCallMonitor: React.FC<LiveCallMonitorProps> = ({
   recentTokens,
   retryCount
 }) => {
+  const isLive = Boolean(activeSessionId) || activeState !== 'DISCONNECTED';
+
   return (
-    <div className="flex flex-col h-full glass-panel rounded-2xl p-5 border border-slate-800">
+    <div className="flex flex-col h-full glass-panel-elevated rounded-2xl overflow-hidden border border-slate-800/70">
       {/* Panel Header */}
-      <div className="flex items-center justify-between pb-3 border-b border-slate-800/80 mb-4">
-        <div className="flex items-center gap-2">
-          <Radio className={`h-4 w-4 ${activeSessionId ? 'text-emerald-400 animate-pulse' : 'text-slate-500'}`} />
-          <h2 className="text-sm font-semibold tracking-wide uppercase text-slate-200">
-            Live Inbound Call Monitor
-          </h2>
+      <div className="flex items-center justify-between px-5 py-3.5 shrink-0" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="flex items-center gap-3">
+          {/* Live indicator */}
+          <div className="relative flex items-center justify-center">
+            <span
+              className={`h-2.5 w-2.5 rounded-full relative z-10 ${isLive ? 'bg-emerald-400' : 'bg-slate-600'}`}
+            />
+            {isLive && (
+              <span className="absolute h-5 w-5 rounded-full bg-emerald-400/25 animate-ping" />
+            )}
+          </div>
+
+          <div>
+            <h2 className="text-[12px] font-bold tracking-tight text-white">
+              Live Inbound Monitor
+            </h2>
+            <p className="text-[10px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
+              SIP Trunk · Twilio Carrier Gateway
+            </p>
+          </div>
         </div>
+
         <div className="flex items-center gap-2">
-          <span className="text-xs font-mono px-2 py-0.5 rounded bg-slate-800/80 text-slate-300">
-            {activeSessionId ? activeSessionId : 'IDLE / STANDBY'}
+          {/* Transport badge */}
+          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10.5px] font-mono"
+            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.4)' }}>
+            <Wifi className="h-3 w-3 text-blue-400" />
+            <span>FastAPI WebSocket</span>
+          </div>
+
+          {/* Session ID */}
+          <span
+            className="text-[10.5px] font-mono px-2.5 py-1 rounded-lg font-semibold"
+            style={{
+              background: isLive ? 'rgba(59,130,246,0.12)' : 'rgba(255,255,255,0.04)',
+              border: isLive ? '1px solid rgba(59,130,246,0.25)' : '1px solid rgba(255,255,255,0.07)',
+              color: isLive ? '#93C5FD' : 'rgba(255,255,255,0.3)'
+            }}
+          >
+            {activeSessionId ? activeSessionId.slice(0, 16) + '…' : 'SESSION STANDBY'}
           </span>
         </div>
       </div>
 
-      {/* Telemetry & Compliance Strip */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs mb-4">
-        <div className="bg-slate-900/80 p-2 rounded-xl border border-slate-800">
-          <span className="text-slate-400 block text-[11px]">Caller ANI</span>
-          <span className="font-mono text-emerald-400 font-medium">
-            +1 (415) 555-0192
-          </span>
-        </div>
-        <div className="bg-slate-900/80 p-2 rounded-xl border border-slate-800">
-          <span className="text-slate-400 block text-[11px]">ANI Telemetry Match</span>
-          <span className="text-teal-300 font-medium flex items-center gap-1">
-            <CheckCircle2 className="h-3 w-3 text-teal-400" />
-            PAT-1001 (Eleanor)
-          </span>
-        </div>
-        <div className="bg-slate-900/80 p-2 rounded-xl border border-slate-800 col-span-2 sm:col-span-1">
-          <span className="text-slate-400 block text-[11px]">Statutory Consent</span>
-          <span className="text-indigo-300 font-medium flex items-center gap-1">
-            <CheckCircle2 className="h-3 w-3 text-indigo-400" />
-            Two-Party Disclosed
-          </span>
-        </div>
+      {/* Telemetry Strip — 3 columns */}
+      <div className="grid grid-cols-3 gap-2 p-4 shrink-0">
+        {[
+          {
+            label: 'Caller ANI',
+            value: '+1 (415) 555-0192',
+            icon: <PhoneCall className="h-3 w-3" style={{ color: 'rgba(255,255,255,0.3)' }} />,
+            mono: true
+          },
+          {
+            label: 'ANI Match',
+            value: 'PAT-1001 · Eleanor Vance',
+            icon: <CheckCircle2 className="h-3 w-3 text-blue-400" />,
+            mono: false
+          },
+          {
+            label: 'Consent',
+            value: 'Two-Party Disclosed',
+            icon: <ShieldCheck className="h-3 w-3 text-slate-400" />,
+            mono: false
+          }
+        ].map((item) => (
+          <div
+            key={item.label}
+            className="px-3 py-2.5 rounded-xl flex items-center justify-between gap-2"
+            style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}
+          >
+            <div className="min-w-0">
+              <span className="text-[9.5px] uppercase font-mono font-semibold tracking-[0.08em] block" style={{ color: 'rgba(255,255,255,0.25)' }}>
+                {item.label}
+              </span>
+              <span
+                className={`text-[11px] font-semibold truncate block ${item.mono ? 'font-mono' : ''}`}
+                style={{ color: 'rgba(255,255,255,0.75)' }}
+              >
+                {item.value}
+              </span>
+            </div>
+            {item.icon}
+          </div>
+        ))}
       </div>
 
-      {/* Real-Time Audio Waveform & Speech Activity */}
-      <AudioWaveform isAgentSpeaking={isAgentSpeaking} activeState={activeState} />
+      {/* Audio Waveform Visualizer */}
+      <div className="px-4 shrink-0">
+        <AudioWaveform isAgentSpeaking={isAgentSpeaking} activeState={activeState} />
+      </div>
 
-      {/* Chronological Transcript Feed with Real-time Word Boost Badges */}
-      <TranscriptFeed
-        transcript={transcript}
-        recentTokens={recentTokens}
-        retryCount={retryCount}
-      />
+      {/* Live Transcript Feed */}
+      <div className="flex-1 min-h-0 flex flex-col px-4 pb-4 pt-2">
+        <div className="flex items-center justify-between mb-2 shrink-0">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.1em]" style={{ color: 'rgba(255,255,255,0.25)' }}>
+            Live Transcript
+          </span>
+          {retryCount > 0 && (
+            <span className="text-[9.5px] font-mono px-2 py-0.5 rounded-md" style={{ background: 'rgba(245,158,11,0.12)', color: '#FCD34D', border: '1px solid rgba(245,158,11,0.25)' }}>
+              Retry #{retryCount}
+            </span>
+          )}
+        </div>
+        <div className="flex-1 min-h-0">
+          <TranscriptFeed
+            transcript={transcript}
+            recentTokens={recentTokens}
+            retryCount={retryCount}
+          />
+        </div>
+      </div>
     </div>
   );
 };
-

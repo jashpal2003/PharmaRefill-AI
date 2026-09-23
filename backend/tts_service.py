@@ -44,7 +44,8 @@ async def synthesize_cartesia_audio(
     text: str,
     voice_id: Optional[str] = None,
     speed: float = 0.92,
-    sample_rate: int = 24000
+    sample_rate: int = 24000,
+    language: str = "en"
 ) -> Optional[bytes]:
     """
     Directly synthesizes speech using Cartesia Sonic-2 /tts/bytes endpoint.
@@ -63,6 +64,7 @@ async def synthesize_cartesia_audio(
     payload = {
         "model_id": "sonic-2",
         "transcript": text,
+        "language": language,
         "voice": {
             "mode": "id",
             "id": target_voice_id
@@ -101,13 +103,14 @@ async def synthesize_cartesia_audio(
 async def synthesize_cartesia_base64(
     text: str,
     voice_id: Optional[str] = None,
-    speed: float = 0.92
+    speed: float = 0.92,
+    language: str = "en"
 ) -> Optional[str]:
     """
     Synthesizes speech and returns a base64 Data URI ('data:audio/wav;base64,...').
     Allows instant zero-latency playback in frontend web clients.
     """
-    raw_wav = await synthesize_cartesia_audio(text, voice_id=voice_id, speed=speed)
+    raw_wav = await synthesize_cartesia_audio(text, voice_id=voice_id, speed=speed, language=language)
     if raw_wav:
         b64 = base64.b64encode(raw_wav).decode("utf-8")
         return f"data:audio/wav;base64,{b64}"
@@ -117,9 +120,10 @@ async def stream_cartesia_tts(
     text: str,
     audio_out_queue: asyncio.Queue,
     cancel_event: asyncio.Event,
-    voice_id: Optional[str] = None
+    voice_id: Optional[str] = None,
+    language: str = "en"
 ):
-    """Streams synthesized PCM audio chunks with sub-150ms latency using Cartesia Sonic API for telephony."""
+    """Streams synthesized PCM audio chunks from the Cartesia Sonic SSE API for telephony."""
     if not text:
         return
 
@@ -136,6 +140,7 @@ async def stream_cartesia_tts(
         payload = {
             "model_id": "sonic-2",
             "transcript": text,
+            "language": language,
             "voice": {
                 "mode": "id",
                 "id": target_voice

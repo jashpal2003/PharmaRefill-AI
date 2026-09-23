@@ -1,62 +1,48 @@
 """
-backend/sms_service.py — Twilio SMS dispatch for dual-channel pickup confirmations.
+backend/sms_service.py — Twilio SMS dispatch. Without Twilio credentials messages are recorded
+in the outbox with status SIMULATED (clearly labelled, never shown as delivered).
 """
 
 import logging
+import uuid
+from collections import deque
+from datetime import datetime
+
 from backend.config import TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER
 
 logger = logging.getLogger("sms_service")
 
-MOCK_SMS_OUTBOX = []
+SMS_OUTBOX: deque = deque(maxlen=200)
 
-def send_pickup_confirmation_sms(
-    to_phone: str,
-    patient_name: str,
-    medications_summary: str,
-    pickup_window: str,
-    total_copay: float
-) -> dict:
-    """Dispatches SMS receipt with anti-RTS pickup window locking."""
-    body = (
-        f"Community Care Pharmacy: Hello {patient_name}, your prescription for {medications_summary} "
-        f"is scheduled for pickup {pickup_window}. Pre-adjudicated copay: ${total_copay:.2f}. "
-        "Reply STOP to cancel."
-    )
+
+def send_pickup_confirmation_sms(to_phone: str, patient_name: str, medications_summary: str,
+                                 pickup_window: str, total_copay: float) -> dict:
+    body = (f"Community Care Pharmacy: Hello {patient_name}, your {medications_summary} "
+            f"is scheduled for pickup {pickup_window}. Estimated copay: ${total_copay:.2f}. Reply STOP to opt out.")
     return _send_sms(to_phone, body, "PICKUP_CONFIRMATION")
 
-def send_snap_link_sms(to_phone: str, session_id: str) -> dict:
-    """Sends immediate SMS link for elderly callers who cannot read their pill bottle."""
-    body = (
-        "Community Care Pharmacy: Having trouble reading your pill bottle? "
-        f"Tap here to scan your bottle label with your phone camera: https://pharmarefill.app/scan/{session_id}"
-    )
-    return _send_sms(to_phone, body, "SNAP_TO_VERIFY")
 
 def _send_sms(to_phone: str, body: str, message_type: str) -> dict:
     record = {
+        "id": f"SMS-{uuid.uuid4().hex[:6].upper()}",
         "to": to_phone,
-        "body": body,
+        "message": body,
         "type": message_type,
-        "status": "SENT"
+        "timestamp": datetime.now().isoformat(sep=" ", timespec="seconds"),
+        "status": "SIMULATED",
+        "channel": "Simulated (Twilio not configured)",
     }
-
     if TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN:
         try:
             from twilio.rest import Client
-            client = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
-            msg = client.messages.create(
-                to=to_phone,
-                from_=TWILIO_PHONE_NUMBER,
-                body=body
-            )
-            record["twilio_sid"] = msg.sid
+            msg = Client(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN).messages.create(to=to_phone, from_=TWILIO_PHONE_NUMBER, body=body)
+            record.update({"twilio_sid": msg.sid, "status": (msg.status or "queued").upper(), "channel": "SMS / Twilio"})
         except Exception as e:
-            record["status"] = "MOCK_SENT"
-    else:
-        record["status"] = "MOCK_SENT"
-
-    MOCK_SMS_OUTBOX.append(record)
+            logger.error("Twilio send failed: %s", e)
+            record.update({"status": "FAILED", "error": str(e), "channel": "SMS / Twilio"})
+    SMS_OUTBOX.append(record)
     return record
 
+
 def get_outbox():
-    return list(reversed(MOCK_SMS_OUTBOX[-20:]))
+    return list(reversed(list(SMS_OUTBOX)[-50:]))
