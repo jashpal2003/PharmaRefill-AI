@@ -133,6 +133,8 @@ CREATE TABLE IF NOT EXISTS access_log (
     log_id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     role TEXT NOT NULL,
+    user_id TEXT,
+    user_email TEXT,
     method TEXT NOT NULL,
     path TEXT NOT NULL,
     patient_id TEXT,
@@ -173,18 +175,18 @@ FILL_HISTORY = {
 
 def seed_extended_records(conn: sqlite3.Connection):
     cursor = conn.cursor()
-    cursor.executemany("INSERT OR REPLACE INTO patient_profile_ext VALUES (?, ?, ?, ?, ?, ?)", [
+    cursor.executemany("INSERT OR REPLACE INTO patient_profile_ext (patient_id, preferred_language, is_pregnant, is_340b_eligible, covered_entity, sms_opt_out) VALUES (?, ?, ?, ?, ?, ?)", [
         ("PAT-1001", "en", 0, 1, "SF Community Health Center (340B CH)", 0),
         ("PAT-1002", "en", 0, 0, None, 0),
         ("PAT-1003", "es", 0, 1, "SF Community Health Center (340B CH)", 0),
         ("PAT-1004", "en", 0, 0, None, 1),
     ])
-    cursor.executemany("INSERT OR REPLACE INTO patient_allergies VALUES (?, ?, ?)", [
+    cursor.executemany("INSERT OR REPLACE INTO patient_allergies (patient_id, allergen, reaction) VALUES (?, ?, ?)", [
         ("PAT-1001", "Penicillin", "Hives"),
         ("PAT-1002", "Sulfonamides", "Rash"),
         ("PAT-1003", "Codeine", "Nausea / vomiting"),
     ])
-    cursor.executemany("INSERT OR REPLACE INTO patient_conditions VALUES (?, ?, ?)", [
+    cursor.executemany("INSERT OR REPLACE INTO patient_conditions (patient_id, condition_code, condition_name) VALUES (?, ?, ?)", [
         ("PAT-1001", "E78.00", "Hyperlipidemia"),
         ("PAT-1001", "E11.9", "Type 2 diabetes mellitus"),
         ("PAT-1001", "I10", "Essential hypertension"),

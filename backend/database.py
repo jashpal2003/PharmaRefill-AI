@@ -8,7 +8,7 @@ import sqlite3
 import os
 from contextlib import contextmanager
 from typing import Generator, Dict, Any, List, Optional
-from backend.config import DB_PATH
+from backend.config import DB_PATH, DATABASE_URL, DB_SCHEMA
 from backend.db_extended import EXTENDED_DDL, RESETTABLE_TABLES, seed_extended_records
 
 DDL_SCHEMA = """
@@ -104,8 +104,18 @@ CREATE TABLE IF NOT EXISTS pharmacy_info (
 );
 """
 
+def using_postgres() -> bool:
+    return bool(DATABASE_URL)
+
+
 @contextmanager
-def get_db_connection() -> Generator[sqlite3.Connection, None, None]:
+def get_db_connection():
+    """Supabase Postgres when DATABASE_URL is set (pooled; commits on clean exit), else local SQLite."""
+    if using_postgres():
+        from backend.pg import PgConnection, get_pool
+        with get_pool(DATABASE_URL, DB_SCHEMA).connection() as raw:
+            yield PgConnection(raw)
+        return
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON;")
@@ -116,11 +126,20 @@ def get_db_connection() -> Generator[sqlite3.Connection, None, None]:
 
 def init_db():
     """Initializes tables and seeds default records."""
-    os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
     with get_db_connection() as conn:
         cursor = conn.cursor()
-        cursor.executescript(DDL_SCHEMA)
-        cursor.executescript(EXTENDED_DDL)
+        if using_postgres():
+            from backend.pg import apply_migration
+            apply_migration(conn, DB_SCHEMA)
+        else:
+            os.makedirs(os.path.dirname(os.path.abspath(DB_PATH)), exist_ok=True)
+            cursor.executescript(DDL_SCHEMA)
+            cursor.executescript(EXTENDED_DDL)
+            for col in ("user_id", "user_email"):  # upgrade older local databases
+                try:
+                    cursor.execute(f"ALTER TABLE access_log ADD COLUMN {col} TEXT")
+                except sqlite3.OperationalError:
+                    pass
 
         # Check if already seeded with new patients
         cursor.execute("SELECT COUNT(*) FROM patients WHERE patient_id = 'PAT-1003'")
@@ -134,9 +153,12 @@ def init_db():
 def reset_db():
     """Drops all demo data (the append-only access log is kept) and re-seeds."""
     with get_db_connection() as conn:
-        conn.execute("PRAGMA foreign_keys = OFF;")
-        for table in RESETTABLE_TABLES:
-            conn.execute(f"DROP TABLE IF EXISTS {table}")
+        if using_postgres():
+            conn.executescript("DROP TABLE IF EXISTS " + ", ".join(RESETTABLE_TABLES) + " CASCADE")
+        else:
+            conn.execute("PRAGMA foreign_keys = OFF;")
+            for table in RESETTABLE_TABLES:
+                conn.execute(f"DROP TABLE IF EXISTS {table}")
         conn.commit()
     init_db()
 

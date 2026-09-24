@@ -14,6 +14,16 @@ TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
 TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER", "+15550190000")
 DB_PATH = os.getenv("DB_PATH", str(BASE_DIR / "pharma_records.db"))
 
+# Supabase Postgres (when set, replaces the local SQLite file)
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+DB_SCHEMA = os.getenv("DB_SCHEMA", "rxtriage")
+
+# Supabase Auth (staff login). JWTs are verified locally against the project's JWKS.
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").rstrip("/")
+SUPABASE_PUBLISHABLE_KEY = os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
+SUPABASE_SECRET_KEY = os.getenv("SUPABASE_SECRET_KEY", "")
+SUPABASE_JWKS_URL = os.getenv("SUPABASE_JWKS_URL", f"{SUPABASE_URL}/auth/v1/.well-known/jwks.json" if SUPABASE_URL else "")
+
 # Bind to loopback by default; set HOST=0.0.0.0 only behind auth + TLS.
 HOST = os.getenv("HOST", "127.0.0.1")
 PORT = int(os.getenv("PORT", 8000))

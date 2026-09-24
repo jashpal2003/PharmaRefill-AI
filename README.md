@@ -22,6 +22,8 @@ A voice agent and pharmacist cockpit for community pharmacies. Callers phone in 
 | Inventory / 340B | Lot-level stock, expiry alerts, reorder suggestions based on dispensing velocity, 340B claim routing and a duplicate-discount flag. No wholesaler EDI or DSCSA exchange. |
 | SMS | Twilio when configured. Otherwise messages are recorded with status `SIMULATED` and never shown as delivered. |
 | Snap-to-Verify | Reads the NDC barcode from the camera or a photo (browser `BarcodeDetector`: Chrome/Edge) and checks it against the patient's prescription. |
+| Database | **Supabase Postgres** (`DATABASE_URL`), in a private `rxtriage` schema that the Supabase Data API does not expose. RLS is on for every table, and the `anon`/`authenticated` roles have no grants. SQLite is used only when no `DATABASE_URL` is set (offline dev). |
+| Staff login | **Supabase Auth** (email + password). The backend checks each token against the project's JWKS. The role comes from `app_metadata.rxtriage_role`, which only the secret key can set. |
 | Security | Role-bound bearer tokens (admin / pharmacist / technician / intern) with role-based access control. PHI is masked for technicians and interns. Append-only HIPAA access log enforced by database triggers, with breach heuristics. CORS allowlist. |
 | Telephony | FastAPI WebSocket PCM stream (`/ws/call/{id}`). No SIP/PSTN carrier integration and no LiveKit. |
 
@@ -39,18 +41,25 @@ A voice agent and pharmacist cockpit for community pharmacies. Callers phone in 
 pip install -r requirements.txt
 cd frontend && npm install && cd ..
 
-cp .env.example .env                    # add API keys and generate your own RXTRIAGE_AUTH_TOKENS
-cp frontend/.env.example frontend/.env.local   # NEXT_PUBLIC_API_TOKEN = one of those tokens
+cp .env.example .env                         # AssemblyAI / Cartesia keys + Supabase DATABASE_URL and keys
+cp frontend/.env.example frontend/.env.local # NEXT_PUBLIC_SUPABASE_URL + publishable key
 
-python start_all.py                     # backend :8000 + frontend :3000
+python scripts/create_staff_user.py you@pharmacy.com admin --name "Your Name"   # prints a one-time password
+python start_all.py                          # backend :8000 (creates schema + demo seed on first start), frontend :3000
 ```
 
-Generate tokens with `python -c "import secrets;print(secrets.token_urlsafe(24))"`. If `RXTRIAGE_AUTH_TOKENS` is empty, the API runs **without authentication** (dev mode) and logs a warning.
+Sign in at http://localhost:3000. Admins can add staff from the API (`POST /api/admin/staff`) or with the script above. The roles are `admin`, `pharmacist`, `technician` (sees masked PHI) and `intern` (read-only).
+
+To apply the schema by hand instead, run `supabase/migrations/001_rxtriage_schema.sql` in the SQL editor after `create schema rxtriage; set search_path to rxtriage;`.
+
+**Latency note:** each database query costs one network round trip. From India to this project it's about 150 ms, so dashboard views take about 0.5–1.5 s and a voice turn adds about 0.5–1 s. Deploy the backend in the same region as the Supabase project to bring that down to a few milliseconds.
 
 ## Tests and tools
 
 ```bash
-python -m pytest tests -q               # engine, clinical rules, API, auth/RBAC (isolated temp DB)
+python -m pytest tests -q                                   # SQLite temp DB
+TEST_DATABASE_URL="$DATABASE_URL" python -m pytest tests -q # same suite on Supabase, in a throwaway schema (dropped afterwards)
+SUPABASE_LIVE_TESTS=1 python -m pytest tests/test_supabase_live.py -q  # real Supabase logins/JWTs (temp users deleted)
 python scripts/simulate_call.py happy_path | dea_block | emergency | spanish | new_caller
 python -m evals.benchmark_eval          # WER benchmark (REFERENCE or LIVE_AUDIO)
 ```
@@ -66,8 +75,11 @@ backend/
   security.py        Token auth, RBAC, PHI masking, access-log middleware
   identity.py        Strict spoken date-of-birth parsing
   i18n.py            English/Spanish normalization and translation
-  database.py, db_extended.py   SQLite schema + demo seed
+  database.py, db_extended.py   data access + demo seed (SQLite dialect)
+  pg.py              Supabase Postgres adapter: pooling, pipelining, dialect translation
+  staff_admin.py     Supabase Auth Admin API (staff accounts/roles)
   assemblyai_service.py, tts_service.py, sms_service.py
+supabase/migrations/ Postgres schema, RLS lockdown, append-only audit trigger
 frontend/src/        Next.js cockpit (lib/api.ts adds the bearer token to every call)
 evals/               WER benchmark
 tests/               pytest suite

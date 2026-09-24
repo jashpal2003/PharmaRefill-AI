@@ -16,7 +16,7 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "PharmaRefill AI (RxTriage) — Clinical Voice Agent & Operations Cockpit",
+  title: "RxTriage AI Cockpit",
   description:
     "Zero-Error Community Pharmacy Voice Triage, DEA Title 21 CFR § 1306 Controlled Substance Guardrails, and Proactive Medication Synchronization.",
   keywords: ["pharmacy", "voice AI", "clinical", "medication sync", "RxTriage"],

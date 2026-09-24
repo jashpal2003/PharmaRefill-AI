@@ -5,6 +5,7 @@ immunizations (+ HL7 VXU), inventory / expiry, 340B, proactive outreach, SDOH, M
 analytics, HIPAA audit log and the smart call queue.
 """
 
+import contextlib
 import heapq
 import itertools
 import json
@@ -42,23 +43,68 @@ def _require_patient(pid: str) -> Dict[str, Any]:
     return p
 
 
-def _fills_by_rx(pid: str) -> Dict[str, List[Dict[str, Any]]]:
+def fetch_many(queries: List[str]) -> List[List[Any]]:
+    """Runs independent read queries in one network round trip on Postgres (pipeline), sequentially on SQLite."""
     with get_db_connection() as conn:
-        rows = [dict(r) for r in conn.execute("SELECT * FROM fill_history WHERE patient_id = ?", (pid,)).fetchall()]
-    out: Dict[str, List[Dict[str, Any]]] = {}
-    for r in rows:
-        out.setdefault(r["rx_number"], []).append(r)
-    return out
+        pipe = conn.pipeline() if hasattr(conn, "pipeline") else contextlib.nullcontext()
+        with pipe:
+            curs = [conn.execute(q) for q in queries]
+        return [c.fetchall() for c in curs]
 
 
-def patient_dur(pid: str) -> Dict[str, Any]:
-    p = _require_patient(pid)
-    prof = get_patient_clinical_profile(pid)
-    rx = get_prescriptions_for_patient(pid)
+class Snapshot:
+    """All clinical data for a set of patients, loaded in 7 queries on one connection.
+    Keeps per-patient loops from issuing N round trips to a remote (Supabase) database."""
+
+    def __init__(self, pids: Optional[List[str]] = None):
+        where, args = ("", ()) if pids is None else (f" WHERE patient_id IN ({', '.join('?' * len(pids))})", tuple(pids))
+        sqls = ["SELECT * FROM patients" + where + " ORDER BY last_name",
+                "SELECT * FROM prescriptions" + where + " ORDER BY next_refill_due_date",
+                "SELECT * FROM fill_history" + where,
+                "SELECT patient_id, allergen, reaction FROM patient_allergies" + where,
+                "SELECT patient_id, condition_code, condition_name FROM patient_conditions" + where,
+                "SELECT * FROM patient_profile_ext" + where,
+                "SELECT * FROM dur_overrides" + where]
+        with get_db_connection() as conn:
+            pipe = conn.pipeline() if hasattr(conn, "pipeline") else contextlib.nullcontext()
+            with pipe:
+                curs = [conn.execute(sql, args) if args else conn.execute(sql) for sql in sqls]
+            pts, self._rx, self._fills, self._allergies, self._conditions, ext, self._overrides = (
+                [dict(r) for r in c.fetchall()] for c in curs)
+        self.patients = {p["patient_id"]: p for p in pts}
+        self._ext = {r["patient_id"]: r for r in ext}
+
+    def _by(self, rows, pid):
+        return [r for r in rows if r["patient_id"] == pid]
+
+    def patient(self, pid: str) -> Dict[str, Any]:
+        if pid not in self.patients:
+            raise HTTPException(404, "Patient not found")
+        return self.patients[pid]
+
+    def prescriptions(self, pid):
+        return self._by(self._rx, pid)
+
+    def fills_by_rx(self, pid):
+        out: Dict[str, List[Dict[str, Any]]] = {}
+        for r in self._by(self._fills, pid):
+            out.setdefault(r["rx_number"], []).append(r)
+        return out
+
+    def profile(self, pid):
+        strip = lambda rows: [{k: v for k, v in r.items() if k != "patient_id"} for r in rows]
+        return {"allergies": strip(self._by(self._allergies, pid)), "conditions": strip(self._by(self._conditions, pid)),
+                "ext": self._ext.get(pid) or {"preferred_language": "en", "is_pregnant": 0, "is_340b_eligible": 0, "sms_opt_out": 0}}
+
+    def overrides(self, pid):
+        return {r["alert_key"]: r for r in self._by(self._overrides, pid)}
+
+
+def patient_dur(pid: str, snap: Optional[Snapshot] = None) -> Dict[str, Any]:
+    snap = snap or Snapshot([pid])
+    p, prof, rx = snap.patient(pid), snap.profile(pid), snap.prescriptions(pid)
     res = kb.run_dur(p, rx, prof["allergies"], prof["conditions"], bool(prof["ext"].get("is_pregnant")))
-    with get_db_connection() as conn:
-        overrides = {r["alert_key"]: dict(r) for r in conn.execute(
-            "SELECT * FROM dur_overrides WHERE patient_id = ?", (pid,)).fetchall()}
+    overrides = snap.overrides(pid)
     for a in res["alerts"]:
         a["override"] = overrides.get(a["alert_key"])
     res.update({"patient_id": pid, "patient_name": f"{p['first_name']} {p['last_name']}",
@@ -94,8 +140,9 @@ def dur_override(req: DurOverrideReq, request: Request):
 @router.get("/dur/retrospective")
 def dur_retrospective():
     rows = []
-    for p in get_all_patients():
-        d = patient_dur(p["patient_id"])
+    snap = Snapshot()
+    for p in snap.patients.values():
+        d = patient_dur(p["patient_id"], snap)
         rows.append({"patient_id": p["patient_id"], "patient_name": d["patient_name"], "overall_risk": d["overall_risk"],
                      "alerts": d["alert_count"],
                      "by_category": {c: sum(1 for a in d["alerts"] if a["category"] == c) for c in {a["category"] for a in d["alerts"]}}})
@@ -158,16 +205,18 @@ def apply_generic(req: GenericSubReq, request: Request):
 # ---------------------------------------------------------------------------
 # Adherence risk (PDC)
 # ---------------------------------------------------------------------------
-def patient_adherence(pid: str) -> Dict[str, Any]:
-    p = _require_patient(pid)
-    res = kb.adherence_risk(get_prescriptions_for_patient(pid), _fills_by_rx(pid))
+def patient_adherence(pid: str, snap: Optional[Snapshot] = None) -> Dict[str, Any]:
+    snap = snap or Snapshot([pid])
+    p = snap.patient(pid)
+    res = kb.adherence_risk(snap.prescriptions(pid), snap.fills_by_rx(pid))
     res.update({"patient_id": pid, "patient_name": f"{p['first_name']} {p['last_name']}", "phone": p["primary_phone"]})
     return res
 
 
 @router.get("/adherence")
 def adherence_all():
-    rows = sorted((patient_adherence(p["patient_id"]) for p in get_all_patients()), key=lambda r: -r["risk_score"])
+    snap = Snapshot()
+    rows = sorted((patient_adherence(pid, snap) for pid in snap.patients), key=lambda r: -r["risk_score"])
     return {"patients": rows, "high_risk_outreach_needed": sum(1 for r in rows if r["risk_band"] == "HIGH")}
 
 
@@ -425,14 +474,16 @@ def _campaign_targets(ctype: str) -> List[Dict[str, Any]]:
             ids = {r[0] for r in conn.execute("SELECT DISTINCT patient_id FROM prescriptions WHERE dea_schedule = 0 AND next_refill_due_date BETWEEN date('now') AND date('now', '+7 days')").fetchall()}
         return [p for p in pts if p["patient_id"] in ids]
     if ctype == "ADHERENCE":
-        return [p for p in pts if patient_adherence(p["patient_id"])["risk_band"] != "LOW"]
+        snap = Snapshot()
+        return [p for p in pts if patient_adherence(p["patient_id"], snap)["risk_band"] != "LOW"]
     if ctype == "FLU_SEASON":
         with get_db_connection() as conn:
             done = {r[0] for r in conn.execute("SELECT patient_id FROM immunizations WHERE vaccine = 'FLU' AND status = 'ADMINISTERED' AND administered_at >= date('now', '-200 days')").fetchall()}
         return [p for p in pts if p["patient_id"] not in done]
     if ctype == "CMR_INVITE":
-        return [p for p in pts if kb.cmr_eligibility(p, get_prescriptions_for_patient(p["patient_id"]),
-                                                      get_patient_clinical_profile(p["patient_id"])["conditions"])["eligible"]]
+        snap = Snapshot()
+        return [p for p in pts if kb.cmr_eligibility(p, snap.prescriptions(p["patient_id"]),
+                                                      snap.profile(p["patient_id"])["conditions"])["eligible"]]
     raise HTTPException(400, f"campaign_type must be one of {list(CAMPAIGN_TYPES)}")
 
 
@@ -541,8 +592,9 @@ def sdoh_history(pid: str):
 @router.get("/mtm")
 def mtm_dashboard():
     rows = []
-    for p in get_all_patients():
-        e = kb.cmr_eligibility(p, get_prescriptions_for_patient(p["patient_id"]), get_patient_clinical_profile(p["patient_id"])["conditions"])
+    snap = Snapshot()
+    for p in snap.patients.values():
+        e = kb.cmr_eligibility(p, snap.prescriptions(p["patient_id"]), snap.profile(p["patient_id"])["conditions"])
         rows.append({"patient_id": p["patient_id"], "patient_name": f"{p['first_name']} {p['last_name']}", **e})
     with get_db_connection() as conn:
         completed = conn.execute("SELECT COUNT(*) FROM consultations WHERE status = 'COMPLETED'").fetchone()[0]
@@ -578,27 +630,42 @@ STAR_MEASURES = {"Statins": {"statin"}, "RAS antagonists": {"ace_inhibitor", "ar
 
 @router.get("/analytics")
 def analytics():
-    with get_db_connection() as conn:
-        c = conn.cursor()
-        total = c.execute("SELECT COUNT(*) FROM call_sessions").fetchone()[0]
-        completed = c.execute("SELECT COUNT(*) FROM call_sessions WHERE call_status = 'COMPLETED' AND escalation_reason IS NULL").fetchone()[0]
-        escalations = {r[0]: r[1] for r in c.execute("SELECT escalation_reason, COUNT(*) FROM call_sessions WHERE escalation_reason IS NOT NULL GROUP BY escalation_reason").fetchall()}
-        aht = c.execute("SELECT AVG((julianday(ended_at) - julianday(started_at)) * 86400) FROM call_sessions WHERE ended_at IS NOT NULL").fetchone()[0]
-        lat = c.execute("SELECT AVG(stt_ms), AVG(engine_ms), AVG(tts_ms), COUNT(*) FROM call_metrics").fetchone()
-        p95_rows = [r[0] for r in c.execute("SELECT COALESCE(stt_ms,0)+COALESCE(engine_ms,0)+COALESCE(tts_ms,0) t FROM call_metrics ORDER BY t").fetchall()]
-        intents = {r[0]: r[1] for r in c.execute("SELECT intent, COUNT(*) FROM call_metrics WHERE intent IS NOT NULL GROUP BY intent").fetchall()}
-        languages = {r[0]: r[1] for r in c.execute("SELECT language, COUNT(DISTINCT session_id) FROM call_metrics GROUP BY language").fetchall()}
-        hourly = {r[0]: r[1] for r in c.execute("SELECT strftime('%H', started_at), COUNT(*) FROM call_sessions GROUP BY 1").fetchall()}
-        fills_daily = [dict(date=r[0], fills=r[1]) for r in c.execute("SELECT date(created_at), COUNT(*) FROM dispense_orders WHERE status IN ('QUEUED_FOR_FILL','DISPENSED') GROUP BY 1 ORDER BY 1 DESC LIMIT 14").fetchall()]
-        revenue = c.execute("SELECT COALESCE(SUM(copay_charged), 0) FROM dispense_orders WHERE status IN ('QUEUED_FOR_FILL','DISPENSED')").fetchone()[0]
-        dispensed = c.execute("SELECT COUNT(*) FROM dispense_orders WHERE status = 'DISPENSED'").fetchone()[0]
-        queued = c.execute("SELECT COUNT(*) FROM dispense_orders WHERE status = 'QUEUED_FOR_FILL'").fetchone()[0]
+    (total_r, completed_r, esc_r, spans, lat_r, p95_r, intent_r, lang_r, fills_r, revenue_r, dispensed_r, queued_r) = fetch_many([
+        "SELECT COUNT(*) FROM call_sessions",
+        "SELECT COUNT(*) FROM call_sessions WHERE call_status = 'COMPLETED' AND escalation_reason IS NULL",
+        "SELECT escalation_reason, COUNT(*) FROM call_sessions WHERE escalation_reason IS NOT NULL GROUP BY escalation_reason",
+        "SELECT started_at, ended_at FROM call_sessions",
+        "SELECT AVG(stt_ms), AVG(engine_ms), AVG(tts_ms), COUNT(*) FROM call_metrics",
+        "SELECT COALESCE(stt_ms,0)+COALESCE(engine_ms,0)+COALESCE(tts_ms,0) t FROM call_metrics ORDER BY t",
+        "SELECT intent, COUNT(*) FROM call_metrics WHERE intent IS NOT NULL GROUP BY intent",
+        "SELECT language, COUNT(DISTINCT session_id) FROM call_metrics GROUP BY language",
+        "SELECT date(created_at), COUNT(*) FROM dispense_orders WHERE status IN ('QUEUED_FOR_FILL','DISPENSED') GROUP BY 1 ORDER BY 1 DESC LIMIT 14",
+        "SELECT COALESCE(SUM(copay_charged), 0) FROM dispense_orders WHERE status IN ('QUEUED_FOR_FILL','DISPENSED')",
+        "SELECT COUNT(*) FROM dispense_orders WHERE status = 'DISPENSED'",
+        "SELECT COUNT(*) FROM dispense_orders WHERE status = 'QUEUED_FOR_FILL'",
+    ])
+    total, completed = total_r[0][0], completed_r[0][0]
+    escalations = {r[0]: r[1] for r in esc_r}
+    lat = lat_r[0]
+    p95_rows = [r[0] for r in p95_r]
+    intents = {r[0]: r[1] for r in intent_r}
+    languages = {r[0]: r[1] for r in lang_r}
+    hourly: Dict[str, int] = {}
+    for sp in spans:
+        if sp[0]:
+            hourly[str(sp[0])[11:13]] = hourly.get(str(sp[0])[11:13], 0) + 1
+    durations = [(datetime.fromisoformat(str(e)) - datetime.fromisoformat(str(b))).total_seconds()
+                 for b, e in ((sp[0], sp[1]) for sp in spans) if b and e]
+    aht = sum(durations) / len(durations) if durations else None
+    fills_daily = [dict(date=r[0], fills=r[1]) for r in fills_r]
+    revenue, dispensed, queued = revenue_r[0][0], dispensed_r[0][0], queued_r[0][0]
     # Star-rating adherence proxies: % of patients on a class with PDC >= 80%
     star = {}
+    snap = Snapshot()
+    adherence_by_pid = {pid: patient_adherence(pid, snap) for pid in snap.patients}
     for label, classes in STAR_MEASURES.items():
         num = den = 0
-        for p in get_all_patients():
-            adh = patient_adherence(p["patient_id"])
+        for adh in adherence_by_pid.values():
             vals = [m["pdc"] for m in adh["medications"] if m["pdc"] is not None
                     and kb.DRUGS.get(kb.ingredient_of(m["drug_name"]) or "", {}).get("class") in classes]
             if vals:
@@ -631,11 +698,11 @@ def audit_log(limit: int = Query(default=200, le=2000), patient_id: Optional[str
         # Breach heuristics: many distinct patients touched per role/IP in the last hour, or repeated denials
         bulk = [dict(r) for r in conn.execute("""
             SELECT role, client_ip, COUNT(DISTINCT patient_id) n FROM access_log
-            WHERE ts >= datetime('now', '-1 hour') AND patient_id IS NOT NULL GROUP BY role, client_ip HAVING n >= 25
+            WHERE ts >= datetime('now', '-1 hour') AND patient_id IS NOT NULL GROUP BY role, client_ip HAVING COUNT(DISTINCT patient_id) >= 25
         """).fetchall()]
         denied = [dict(r) for r in conn.execute("""
             SELECT role, client_ip, COUNT(*) n FROM access_log
-            WHERE ts >= datetime('now', '-1 hour') AND status_code IN (401, 403, 4401) GROUP BY role, client_ip HAVING n >= 10
+            WHERE ts >= datetime('now', '-1 hour') AND status_code IN (401, 403, 4401) GROUP BY role, client_ip HAVING COUNT(*) >= 10
         """).fetchall()]
     anomalies = [{"type": "BULK_PHI_ACCESS", **b} for b in bulk] + [{"type": "REPEATED_DENIALS", **d} for d in denied]
     return {"entries": rows, "anomalies": anomalies, "immutable": True}
@@ -644,7 +711,8 @@ def audit_log(limit: int = Query(default=200, le=2000), patient_id: Optional[str
 @router.get("/me")
 def whoami(request: Request):
     role = _role(request)
-    return {"role": role, "phi_masked": masks_phi(role)}
+    ident = request.scope.get("state", {}).get("identity") or {}
+    return {"role": role, "phi_masked": masks_phi(role), "email": ident.get("email"), "user_id": ident.get("user_id")}
 
 
 # ---------------------------------------------------------------------------
@@ -770,3 +838,31 @@ def verify_ndc(code: str, patient_id: str):
     return {"ndc10": ndc10, "ndc11": product["ndc"], "product": f"{product['drug_name']} {product['strength']}",
             "match": bool(rx), "rx": rx,
             "reason": None if rx else "Product does not match any active prescription for this patient (drug or strength differs)"}
+
+
+# ---------------------------------------------------------------------------
+# Staff administration (Supabase Auth)
+# ---------------------------------------------------------------------------
+class StaffReq(BaseModel):
+    email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+    role: str
+    password: Optional[str] = Field(default=None, min_length=12)
+    full_name: Optional[str] = None
+
+
+@router.get("/admin/staff")
+def staff_list():
+    from backend.staff_admin import StaffAdminError, list_staff
+    try:
+        return {"staff": list_staff()}
+    except StaffAdminError as e:
+        raise HTTPException(502, str(e))
+
+
+@router.post("/admin/staff")
+def staff_upsert(req: StaffReq):
+    from backend.staff_admin import StaffAdminError, upsert_staff
+    try:
+        return upsert_staff(req.email, req.role, req.password, req.full_name)
+    except StaffAdminError as e:
+        raise HTTPException(400, str(e))

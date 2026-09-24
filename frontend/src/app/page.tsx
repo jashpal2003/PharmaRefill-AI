@@ -25,8 +25,17 @@ import { OutreachView } from '@/components/OutreachView';
 import { InventoryView } from '@/components/InventoryView';
 import { ComplianceView } from '@/components/ComplianceView';
 import { WarmTransferModal } from '@/components/WarmTransferModal';
+import { AuthGate } from '@/components/AuthGate';
 
-export default function PharmacistCockpitPage() {
+export default function Page() {
+  return (
+    <AuthGate>
+      <PharmacistCockpit />
+    </AuthGate>
+  );
+}
+
+function PharmacistCockpit() {
   const {
     isConnected,
     summary,

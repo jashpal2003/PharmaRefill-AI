@@ -12,3 +12,6 @@ requests>=2.31.0
 twilio>=9.0.0
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
+psycopg[binary]>=3.1
+psycopg-pool>=3.2
+PyJWT[crypto]>=2.8

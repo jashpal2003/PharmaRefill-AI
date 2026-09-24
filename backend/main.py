@@ -53,9 +53,10 @@ from backend.database import (
     get_prescriptions_for_patient,
     init_db,
     reset_db,
+    using_postgres,
 )
-from backend.ops_routes import patient_adherence, patient_dur, router as ops_router
-from backend.security import SecurityMiddleware, mask_patient, masks_phi
+from backend.ops_routes import Snapshot, fetch_many, patient_adherence, patient_dur, router as ops_router
+from backend.security import AUTH_ENABLED, SecurityMiddleware, mask_patient, masks_phi
 from backend.sms_service import get_outbox, send_pickup_confirmation_sms, _send_sms
 from backend.tts_service import AVAILABLE_VOICES, stream_cartesia_tts, synthesize_cartesia_base64
 from evals.benchmark_eval import run_benchmark
@@ -125,16 +126,17 @@ def close_session(session_id: str, audit: Optional[dict] = None):
 
 
 def dashboard_summary() -> Dict[str, Any]:
-    with get_db_connection() as conn:
-        c = conn.cursor()
-        total_calls = c.execute("SELECT COUNT(*) FROM call_sessions").fetchone()[0]
-        completed = c.execute("SELECT COUNT(*) FROM call_sessions WHERE call_status IN ('COMPLETED', 'DISPENSED')").fetchone()[0]
-        contained = c.execute("SELECT COUNT(*) FROM call_sessions WHERE call_status = 'COMPLETED' AND escalation_reason IS NULL").fetchone()[0]
-        dea_blocks = c.execute("SELECT COUNT(*) FROM dispense_orders WHERE status = 'BLOCKED_DEA_REVIEW'").fetchone()[0]
-        adverse = c.execute("SELECT COUNT(*) FROM call_sessions WHERE escalation_reason = 'EMERGENCY_ADVERSE_REACTION'").fetchone()[0]
-        queued = c.execute("SELECT COUNT(*) FROM dispense_orders WHERE status = 'QUEUED_FOR_FILL'").fetchone()[0]
-        vol = c.execute("SELECT SUM(copay_charged) FROM dispense_orders WHERE status IN ('QUEUED_FOR_FILL', 'DISPENSED')").fetchone()[0] or 0.0
-    pdcs = [patient_adherence(p["patient_id"])["average_pdc"] for p in get_all_patients()]
+    total_calls, completed, contained, dea_blocks, adverse, queued, vol = (r[0][0] for r in fetch_many([
+        "SELECT COUNT(*) FROM call_sessions",
+        "SELECT COUNT(*) FROM call_sessions WHERE call_status IN ('COMPLETED', 'DISPENSED')",
+        "SELECT COUNT(*) FROM call_sessions WHERE call_status = 'COMPLETED' AND escalation_reason IS NULL",
+        "SELECT COUNT(*) FROM dispense_orders WHERE status = 'BLOCKED_DEA_REVIEW'",
+        "SELECT COUNT(*) FROM call_sessions WHERE escalation_reason = 'EMERGENCY_ADVERSE_REACTION'",
+        "SELECT COUNT(*) FROM dispense_orders WHERE status = 'QUEUED_FOR_FILL'",
+        "SELECT COALESCE(SUM(copay_charged), 0) FROM dispense_orders WHERE status IN ('QUEUED_FOR_FILL', 'DISPENSED')",
+    ]))
+    snap = Snapshot()
+    pdcs = [patient_adherence(pid, snap)["average_pdc"] for pid in snap.patients]
     return {
         "total_calls": total_calls,
         "completed_calls": completed,
@@ -155,6 +157,23 @@ def _patients_for_role(role: str) -> List[Dict[str, Any]]:
     return [mask_patient(p) for p in pts] if masks_phi(role) else pts
 
 
+def build_dashboard_snapshot(role: str) -> Dict[str, Any]:
+    all_patients = _patients_for_role(role)
+    first_id = all_patients[0]["patient_id"] if all_patients else None
+    return {
+        "summary": dashboard_summary(),
+        "patients": all_patients,
+        "patient": all_patients[0] if all_patients else None,
+        "prescriptions": get_prescriptions_for_patient(first_id) if first_id else [],
+        "orders": get_dispense_orders(limit=25),
+        "sessions": get_call_sessions(limit=15),
+        "consultations": get_consultations(),
+        "billing": get_billing_account(first_id) if first_id else None,
+        "pharmacy_info": get_pharmacy_info(),
+        "role": role,
+    }
+
+
 # -------------------------------------------------------------
 # WebSockets
 # -------------------------------------------------------------
@@ -164,27 +183,15 @@ async def dashboard_websocket(websocket: WebSocket):
     dashboard_clients.add(websocket)
     role = websocket.scope.get("state", {}).get("role", "admin")
     try:
-        all_patients = _patients_for_role(role)
-        first_id = all_patients[0]["patient_id"] if all_patients else None
-        await websocket.send_text(json.dumps({
-            "type": "INITIAL_SNAPSHOT", "event": "INITIAL_SNAPSHOT",
-            "data": {
-                "summary": dashboard_summary(),
-                "patients": all_patients,
-                "patient": next((p for p in all_patients if p["patient_id"] == first_id), None),
-                "prescriptions": get_prescriptions_for_patient(first_id) if first_id else [],
-                "orders": get_dispense_orders(limit=25),
-                "sessions": get_call_sessions(limit=15),
-                "consultations": get_consultations(),
-                "billing": get_billing_account(first_id) if first_id else None,
-                "pharmacy_info": get_pharmacy_info(),
-                "role": role,
-            },
-        }, default=str))
+        snapshot = await asyncio.to_thread(build_dashboard_snapshot, role)
+        await websocket.send_text(json.dumps({"type": "INITIAL_SNAPSHOT", "event": "INITIAL_SNAPSHOT", "data": snapshot}, default=str))
         while True:
             if await websocket.receive_text() == "ping":
                 await websocket.send_text(json.dumps({"type": "PONG"}))
-    except (WebSocketDisconnect, Exception):
+    except WebSocketDisconnect:
+        dashboard_clients.discard(websocket)
+    except Exception:
+        logger.exception("dashboard websocket error")
         dashboard_clients.discard(websocket)
 
 
@@ -193,13 +200,13 @@ async def handle_call_stream(websocket: WebSocket, session_id: str):
     """Bi-directional telephony audio: PCM16 in -> AssemblyAI streaming STT -> engine -> Cartesia TTS out."""
     await websocket.accept()
     caller_phone = websocket.query_params.get("caller_phone", "")
-    engine = PharmaAgentEngine(session_id, caller_phone)
+    engine = await asyncio.to_thread(PharmaAgentEngine, session_id, caller_phone)
     inbound: asyncio.Queue = asyncio.Queue()
     outbound: asyncio.Queue = asyncio.Queue()
     interruption = asyncio.Event()
     log: List[str] = []
 
-    first = engine.process_utterance("START")
+    first = await asyncio.to_thread(engine.process_utterance, "START")
     log.append(f"Agent: {first['spoken_text']}")
     await broadcast_to_dashboard("CALL_STARTED", {"session_id": session_id, "caller_phone": caller_phone,
                                                   "ani_matched": engine.ani_matched})
@@ -217,13 +224,13 @@ async def handle_call_stream(websocket: WebSocket, session_id: str):
         result = await asyncio.to_thread(engine.process_utterance, text)
         engine_ms = int((time.perf_counter() - t0) * 1000)
         log.append(f"Agent: {result['spoken_text']}")
-        record_turn_metric(session_id, str(engine.state.value), result.get("intent"), engine.language, None, engine_ms, None)
+        await asyncio.to_thread(record_turn_metric, session_id, str(engine.state.value), result.get("intent"), engine.language, None, engine_ms, None)
         await broadcast_to_dashboard("STATE_TRANSITION", {
             "session_id": session_id, "state": result["current_state"], "is_escalation": result["is_escalation"],
             "escalation_reason": result.get("escalation_reason"), "agent_speech": result["spoken_text"],
             "patient": result.get("patient"), "language": engine.language})
         if result["is_escalation"]:
-            await broadcast_to_dashboard("WARM_TRANSFER_CONTEXT", build_handoff_packet(engine, log))
+            await broadcast_to_dashboard("WARM_TRANSFER_CONTEXT", await asyncio.to_thread(build_handoff_packet, engine, log))
         asyncio.create_task(stream_cartesia_tts(result["spoken_text"], outbound, interruption, language=engine.language))
 
     aai_task = asyncio.create_task(connect_assemblyai_realtime(inbound, on_transcript))
@@ -261,13 +268,13 @@ async def handle_call_stream(websocket: WebSocket, session_id: str):
     aai_task.cancel()
 
     transcript = "\n".join(log)
-    rx = get_prescriptions_for_patient(engine.patient_id) if engine.patient_id and engine.is_authenticated else []
+    rx = await asyncio.to_thread(get_prescriptions_for_patient, engine.patient_id) if engine.patient_id and engine.is_authenticated else []
     audit = await asyncio.to_thread(run_lemur_clinical_audit, transcript, engine.patient if engine.is_authenticated else None, rx)
     with get_db_connection() as conn:
         conn.execute("UPDATE call_sessions SET call_status = CASE WHEN call_status = 'IN_PROGRESS' THEN 'ABANDONED' ELSE call_status END WHERE session_id = ?",
                      (session_id,))
         conn.commit()
-    close_session(session_id, audit)
+    await asyncio.to_thread(close_session, session_id, audit)
     await broadcast_to_dashboard("LEMUR_AUDIT_COMPLETED", {"session_id": session_id, "audit": audit})
 
 
@@ -286,14 +293,15 @@ def build_handoff_packet(engine: PharmaAgentEngine, transcript_log: List[str]) -
     }
     if engine.is_authenticated and engine.patient_id:
         prof = get_patient_clinical_profile(engine.patient_id)
-        dur = patient_dur(engine.patient_id)
+        snap = Snapshot([engine.patient_id])
+        dur = patient_dur(engine.patient_id, snap)
         packet.update({
             "patient": engine.patient,
             "active_prescriptions": get_prescriptions_for_patient(engine.patient_id),
             "allergies": prof["allergies"],
             "conditions": prof["conditions"],
             "dur_top_alerts": dur["alerts"][:3],
-            "adherence": {k: v for k, v in patient_adherence(engine.patient_id).items() if k in ("risk_score", "risk_band", "average_pdc")},
+            "adherence": {k: v for k, v in patient_adherence(engine.patient_id, snap).items() if k in ("risk_score", "risk_band", "average_pdc")},
         })
     return packet
 
@@ -308,7 +316,8 @@ def get_health():
         "app": "RxTriage AI Engine (FastAPI WebSockets + AssemblyAI STT + Cartesia TTS)",
         "version": "3.0.0",
         "station": ACTIVE_STATION,
-        "auth_enabled": bool(AUTH_TOKENS),
+        "auth_enabled": AUTH_ENABLED,
+        "database": "supabase-postgres" if using_postgres() else "sqlite",
         "llm_model": LLM_MODEL,
     }
 
@@ -351,17 +360,22 @@ def orders():
 
 @app.post("/api/orders/dispense-all")
 async def dispense_all():
+    dispensed = await asyncio.to_thread(_dispense_all_sync)
+    await broadcast_to_dashboard("DISPENSE_QUEUE_UPDATED", {})
+    return {"status": "SUCCESS", "dispensed": dispensed}
+
+
+def _dispense_all_sync() -> int:
     with get_db_connection() as conn:
         rows = conn.execute("SELECT rx_number, patient_id FROM dispense_orders WHERE status = 'QUEUED_FOR_FILL'").fetchall()
         for rx, pid in rows:
             ds = conn.execute("SELECT days_supply FROM prescriptions WHERE rx_number = ?", (rx,)).fetchone()[0]
             conn.execute("INSERT INTO fill_history (rx_number, patient_id, fill_date, days_supply) VALUES (?, ?, date('now'), ?)", (rx, pid, ds))
-            conn.execute("""UPDATE prescriptions SET refills_remaining = MAX(refills_remaining - 1, 0), last_fill_date = date('now'),
+            conn.execute("""UPDATE prescriptions SET refills_remaining = CASE WHEN refills_remaining > 0 THEN refills_remaining - 1 ELSE 0 END, last_fill_date = date('now'),
                             next_refill_due_date = date('now', '+' || days_supply || ' days') WHERE rx_number = ?""", (rx,))
         conn.execute("UPDATE dispense_orders SET status = 'DISPENSED' WHERE status = 'QUEUED_FOR_FILL'")
         conn.commit()
-    await broadcast_to_dashboard("DISPENSE_QUEUE_UPDATED", {})
-    return {"status": "SUCCESS", "dispensed": len(rows)}
+    return len(rows)
 
 
 @app.get("/api/consultations")
@@ -378,9 +392,9 @@ class AddConsultationReq(BaseModel):
 
 @app.post("/api/consultations")
 async def schedule_consultation_endpoint(req: AddConsultationReq):
-    if not get_patient(req.patient_id):
+    if not await asyncio.to_thread(get_patient, req.patient_id):
         raise HTTPException(404, "Patient not found")
-    c = add_consultation(req.patient_id, req.scheduled_time, req.reason, req.pharmacist_name)
+    c = await asyncio.to_thread(add_consultation, req.patient_id, req.scheduled_time, req.reason, req.pharmacist_name)
     await broadcast_to_dashboard("CONSULTATION_SCHEDULED", c)
     return c
 
@@ -401,7 +415,7 @@ class ApplyPaymentReq(BaseModel):
 async def pay_billing_endpoint(patient_id: str, req: ApplyPaymentReq):
     if req.amount <= 0:
         raise HTTPException(400, "Amount must be positive")
-    res = apply_billing_payment(patient_id, req.amount)
+    res = await asyncio.to_thread(apply_billing_payment, patient_id, req.amount)
     await broadcast_to_dashboard("BILLING_PAYMENT_PROCESSED", {"patient_id": patient_id, "res": res})
     return res
 
@@ -540,7 +554,7 @@ async def run_agent_turn(req: SimulateStepReq, stt_ms: Optional[int] = None) -> 
     voice_meta = AVAILABLE_VOICES.get(voice, {"name": "Cartesia Voice"})
 
     if session_id not in ACTIVE_SESSIONS:
-        engine = PharmaAgentEngine(session_id, req.caller_phone)
+        engine = await asyncio.to_thread(PharmaAgentEngine, session_id, req.caller_phone)
         ACTIVE_SESSIONS[session_id] = {"engine": engine, "transcript_log": [], "last_seen": time.time(), "audited": False}
         await broadcast_to_dashboard("CALL_STARTED", {"session_id": session_id, "caller_phone": req.caller_phone,
                                                       "ani_matched": engine.ani_matched})
@@ -567,7 +581,7 @@ async def run_agent_turn(req: SimulateStepReq, stt_ms: Optional[int] = None) -> 
     t1 = time.perf_counter()
     audio_b64 = await synthesize_cartesia_base64(spoken, voice_id=voice, speed=0.92, language=engine.language) if spoken else None
     tts_ms = int((time.perf_counter() - t1) * 1000) if audio_b64 else None
-    record_turn_metric(session_id, engine.state.value, res.get("intent"), engine.language, stt_ms, engine_ms, tts_ms)
+    await asyncio.to_thread(record_turn_metric, session_id, engine.state.value, res.get("intent"), engine.language, stt_ms, engine_ms, tts_ms)
 
     reason = res.get("escalation_reason")
     if reason == EscalationReason.DEA_CONTROLLED_SUBSTANCE.value:
@@ -577,13 +591,13 @@ async def run_agent_turn(req: SimulateStepReq, stt_ms: Optional[int] = None) -> 
         await broadcast_to_dashboard("EMERGENCY_ALERT", {"session_id": session_id, "patient": res.get("patient"),
                                                          "warning": "ACUTE ADVERSE EVENT: caller reported symptoms consistent with a severe reaction. Warm transfer initiated."})
     if res.get("is_escalation"):
-        await broadcast_to_dashboard("WARM_TRANSFER_CONTEXT", build_handoff_packet(engine, ctx["transcript_log"]))
+        await broadcast_to_dashboard("WARM_TRANSFER_CONTEXT", await asyncio.to_thread(build_handoff_packet, engine, ctx["transcript_log"]))
 
     if res.get("trigger_sms") and engine.patient:
         meds = engine.requested_medication["drug_name"] if engine.requested_medication else "your prescription"
         if engine.synced_medications:
             meds += f" + {len(engine.synced_medications)} synchronized refills"
-        send_pickup_confirmation_sms(engine.patient["primary_phone"], engine.patient["first_name"], meds,
+        await asyncio.to_thread(send_pickup_confirmation_sms, engine.patient["primary_phone"], engine.patient["first_name"], meds,
                                      engine.committed_pickup_slot or "Friday 3:00 PM - 6:00 PM", engine.total_copay)
 
     await broadcast_to_dashboard("AGENT_SPEAKING", {
@@ -597,10 +611,10 @@ async def run_agent_turn(req: SimulateStepReq, stt_ms: Optional[int] = None) -> 
     terminal = engine.state in (AgentState.ESCALATE_HUMAN, AgentState.HOLD_AND_TRANSFER) or res.get("end_call")
     if terminal and not ctx["audited"]:
         ctx["audited"] = True
-        rx = get_prescriptions_for_patient(engine.patient_id) if engine.is_authenticated and engine.patient_id else []
+        rx = await asyncio.to_thread(get_prescriptions_for_patient, engine.patient_id) if engine.is_authenticated and engine.patient_id else []
         audit = await asyncio.to_thread(run_lemur_clinical_audit, "\n".join(ctx["transcript_log"]),
                                         engine.patient if engine.is_authenticated else None, rx)
-        close_session(session_id, audit)
+        await asyncio.to_thread(close_session, session_id, audit)
         await broadcast_to_dashboard("LEMUR_AUDIT_COMPLETED", {"session_id": session_id, "audit": audit})
 
     return {
@@ -664,7 +678,7 @@ async def reset_demo():
 # Clinical intelligence (DDI/DUR, SOAP, PDMP, SMS)
 # -------------------------------------------------------------
 @app.get("/api/clinical/ddi-check/{patient_id}")
-async def clinical_ddi_check(patient_id: str):
+def clinical_ddi_check(patient_id: str):
     """Legacy shape used by the call-center panel; backed by the full DUR engine."""
     d = patient_dur(patient_id)
     return {
@@ -706,6 +720,10 @@ def _deterministic_soap(p, rx, prof, transcript, orders, session) -> Dict[str, s
 
 @app.post("/api/clinical/soap-note")
 async def generate_clinical_soap_note(req: SoapNoteReq):
+    return await asyncio.to_thread(_soap_note_sync, req)
+
+
+def _soap_note_sync(req: SoapNoteReq):
     p = get_patient(req.patient_id)
     if not p:
         raise HTTPException(404, "Patient not found")
@@ -725,7 +743,7 @@ async def generate_clinical_soap_note(req: SoapNoteReq):
               "prescriptions": rx, "allergies": prof["allergies"], "conditions": prof["conditions"],
               "session": {k: session.get(k) for k in ("auth_method", "caller_verified", "call_status", "escalation_reason")},
               "orders": orders}
-    soap = await asyncio.to_thread(generate_soap_note_llm, transcript, record) if transcript else None
+    soap = generate_soap_note_llm(transcript, record) if transcript else None
     engine_label = f"LLM ({LLM_MODEL})"
     if not soap:
         soap = _deterministic_soap(p, rx, prof, transcript, orders, session)
@@ -737,7 +755,7 @@ async def generate_clinical_soap_note(req: SoapNoteReq):
 
 
 @app.get("/api/clinical/pdmp/{patient_id}")
-async def clinical_pdmp_check(patient_id: str):
+def clinical_pdmp_check(patient_id: str):
     """Controlled-substance summary from THIS pharmacy's records, with computed MME/day."""
     p = get_patient(patient_id)
     if not p:
@@ -768,7 +786,7 @@ async def clinical_pdmp_check(patient_id: str):
 
 
 @app.get("/api/sms/outbox")
-async def get_sms_outbox():
+def get_sms_outbox():
     outbox = get_outbox()
     return {"outbox": outbox, "total_sent": len(outbox)}
 
@@ -781,7 +799,7 @@ class SendLockerOtpReq(BaseModel):
 
 
 @app.post("/api/sms/send-locker-otp")
-async def send_locker_otp(req: SendLockerOtpReq):
+def send_locker_otp(req: SendLockerOtpReq):
     otp = f"{secrets.randbelow(10000):04d}"
     pharmacy = get_pharmacy_info().get("name", "Community Care Pharmacy")
     msg = (f"{pharmacy}: Hello {req.patient_name}, your order ({req.rx_summary}) is ready in {req.locker_number}. "

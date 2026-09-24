@@ -59,6 +59,9 @@ export function useDashboardSocket() {
 
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const patientIdRef = useRef<string | undefined>(undefined);
+  const unmountedRef = useRef(false);
+  patientIdRef.current = patient?.patient_id;
 
   const connect = useCallback(() => {
     const url = wsUrl('/ws/dashboard');
@@ -184,7 +187,7 @@ export function useDashboardSocket() {
               break;
 
             case 'BILLING_PAYMENT_PROCESSED':
-              if (data?.res && patient?.patient_id === data.patient_id) {
+              if (data?.res && patientIdRef.current === data.patient_id) {
                 setBilling((prev) => prev ? { ...prev, outstanding_balance: data.res.remaining_balance } : null);
               }
               break;
@@ -216,7 +219,8 @@ export function useDashboardSocket() {
 
       ws.onclose = () => {
         setIsConnected(false);
-        reconnectTimeoutRef.current = setTimeout(connect, 3000);
+        // Reconnect only after an unexpected drop (not on unmount), picking up a refreshed token.
+        if (!unmountedRef.current) reconnectTimeoutRef.current = setTimeout(connect, 3000);
       };
 
       ws.onerror = () => {
@@ -225,11 +229,13 @@ export function useDashboardSocket() {
     } catch (e) {
       console.error('WebSocket connection initialization error:', e);
     }
-  }, [patient?.patient_id]);
+  }, []);
 
   useEffect(() => {
+    unmountedRef.current = false;
     connect();
     return () => {
+      unmountedRef.current = true;
       if (socketRef.current) socketRef.current.close();
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
     };

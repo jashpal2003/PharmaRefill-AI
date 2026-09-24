@@ -140,3 +140,24 @@ def test_inventory_340b_sdoh_mtm(client):
 def test_benchmark_is_labelled(client):
     b = client.get("/api/eval/benchmark", headers=RPH).json()
     assert b["mode"] == "REFERENCE" and b["is_measured"] is False and b["disclaimer"]
+
+
+def test_rows_unpack_like_sqlite_and_fills_seeded(client):
+    from backend.database import get_db_connection
+    with get_db_connection() as conn:
+        rx, pid = conn.execute("SELECT rx_number, patient_id FROM prescriptions WHERE rx_number = 'RX-4829103'").fetchone()
+        n = conn.execute("SELECT COUNT(*) FROM fill_history").fetchone()[0]
+    assert (rx, pid) == ("RX-4829103", "PAT-1001") and n > 30
+    star = client.get("/api/analytics", headers=RPH).json()["star_adherence"]
+    assert star["Statins"]["eligible_patients"] == 2  # Eleanor (atorvastatin), David (rosuvastatin)
+
+
+def test_dispense_all_records_fills(client):
+    for u in ["START", "April 12, 1958", "refill atorvastatin", "no", "yes", "yes"]:
+        client.post("/api/call/simulate-step", headers=RPH, json={"session_id": "DISP-1", "utterance": u})
+    before = client.get("/api/adherence/PAT-1001", headers=RPH).json()
+    assert client.post("/api/orders/dispense-all", headers=RPH).json()["dispensed"] == 1
+    from backend.database import get_db_connection
+    with get_db_connection() as conn:
+        refills = conn.execute("SELECT refills_remaining FROM prescriptions WHERE rx_number = 'RX-4829103'").fetchone()[0]
+    assert refills == 1 and before["patient_id"] == "PAT-1001"

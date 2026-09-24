@@ -1,5 +1,7 @@
 'use client';
 
+import { useAuth } from './AuthGate';
+
 import React, { useState } from 'react';
 import {
   PhoneCall,
@@ -275,6 +277,21 @@ export const Header: React.FC<HeaderProps> = ({
           <RotateCcw className="h-3.5 w-3.5" />
         </button>
       </div>
+      <UserChip />
     </header>
+  );
+};
+
+const UserChip: React.FC = () => {
+  const { me, signOut } = useAuth();
+  if (!me) return null;
+  return (
+    <div className="flex items-center gap-2 pl-3 ml-1 border-l border-slate-800 text-[11px]">
+      <div className="text-right leading-tight hidden md:block">
+        <div className="text-slate-200">{me.email || 'Service account'}</div>
+        <div className="text-slate-500 uppercase font-mono">{me.role}{me.phi_masked ? ' · PHI masked' : ''}</div>
+      </div>
+      <button onClick={signOut} className="px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer" title="Sign out">Sign out</button>
+    </div>
   );
 };
