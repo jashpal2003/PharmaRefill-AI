@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { Syringe } from 'lucide-react';
 import { apiJson } from '@/lib/api';
+import { friendlyError, useFeedback } from './feedback';
 import { Patient } from '@/lib/types';
 import { Badge, Btn, Card, ErrorNote, ViewShell, selectCls, useApi } from './ui';
 
@@ -15,6 +16,7 @@ export const ImmunizationsView: React.FC<{ patients: Patient[] }> = ({ patients 
   const [answers, setAnswers] = useState<Record<string, boolean>>({});
   const [hl7, setHl7] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const { prompt, toast } = useFeedback();
 
   const questions: string[] = list.data?.screening_questions || [];
 
@@ -26,23 +28,25 @@ export const ImmunizationsView: React.FC<{ patients: Patient[] }> = ({ patients 
         body: JSON.stringify({ patient_id: pid, vaccine: vaccine || recs.data?.recommended?.[0]?.code, scheduled_for: when || 'Walk-in today', screening: answers }),
       });
       setAnswers({});
+      toast(Object.values(answers).some(Boolean) ? 'Scheduled. Screening answers need pharmacist review before administering.' : 'Vaccination scheduled.');
       list.reload();
       recs.reload();
-    } catch (e: any) {
-      setErr(e.message);
+    } catch (e) {
+      toast(friendlyError(e), 'error');
     }
   };
 
   const administer = async (id: string) => {
-    const lot = window.prompt('Vaccine lot number?');
+    const lot = await prompt({ title: 'Record administration', description: 'Enter the lot number from the vial. An HL7 VXU message is generated for the state registry.', label: 'Lot number', placeholder: 'e.g. FL2026A', minLength: 3, confirmLabel: 'Mark administered' });
     if (!lot) return;
     try {
       const r = await apiJson(`/api/immunizations/${id}/administer`, { method: 'POST', body: JSON.stringify({ lot_number: lot }) });
       setHl7(r.hl7_vxu);
+      toast('Dose recorded and registry message generated.');
       list.reload();
       recs.reload();
-    } catch (e: any) {
-      setErr(e.message);
+    } catch (e) {
+      toast(friendlyError(e), 'error');
     }
   };
 

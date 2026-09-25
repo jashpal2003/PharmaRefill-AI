@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { FileClock, Plus, RefreshCw } from 'lucide-react';
 import { apiJson } from '@/lib/api';
+import { friendlyError, useFeedback } from './feedback';
 import { Patient } from '@/lib/types';
 import { Badge, Btn, Card, ErrorNote, ViewShell, selectCls, useApi } from './ui';
 
@@ -22,28 +23,35 @@ export const PriorAuthView: React.FC<{ patients: Patient[] }> = ({ patients }) =
   const rx = useApi<any[]>(`/api/prescriptions?patient_id=${pid}`, [pid]);
   const [rxNum, setRxNum] = useState('');
   const [urgency, setUrgency] = useState('STANDARD');
-  const [err, setErr] = useState<string | null>(null);
   const [letter, setLetter] = useState<string | null>(null);
+  const { prompt, toast } = useFeedback();
 
-  const act = async (fn: () => Promise<any>) => {
+  const act = async (fn: () => Promise<any>, success?: string) => {
     try {
-      setErr(null);
       const r = await fn();
+      if (success) toast(success);
       board.reload();
       return r;
-    } catch (e: any) {
-      setErr(e.message);
+    } catch (e) {
+      toast(friendlyError(e), 'error');
     }
   };
 
   const create = () =>
-    act(() => apiJson('/api/pa', { method: 'POST', body: JSON.stringify({ patient_id: pid, rx_number: rxNum || rx.data?.[0]?.rx_number, urgency }) }));
-  const move = (id: string, status: string) => {
-    const denial_reason = status === 'DENIED' ? window.prompt('Payer denial reason?') || undefined : undefined;
-    return act(() => apiJson(`/api/pa/${id}/status`, { method: 'POST', body: JSON.stringify({ status, denial_reason }) }));
+    act(() => apiJson('/api/pa', { method: 'POST', body: JSON.stringify({ patient_id: pid, rx_number: rxNum || rx.data?.[0]?.rx_number, urgency }) }),
+      'Prior authorization created with a drafted clinical justification.');
+  const move = async (id: string, status: string) => {
+    let denial_reason: string | undefined;
+    if (status === 'DENIED') {
+      const r = await prompt({ title: 'Record payer denial', label: 'Denial reason (from the payer)', placeholder: 'e.g. Step therapy with generic required', minLength: 3, confirmLabel: 'Mark denied', danger: true });
+      if (!r) return;
+      denial_reason = r;
+    }
+    return act(() => apiJson(`/api/pa/${id}/status`, { method: 'POST', body: JSON.stringify({ status, denial_reason }) }),
+      `Moved ${id} to ${status.toLowerCase()}.`);
   };
   const appeal = async (id: string) => {
-    const r = await act(() => apiJson(`/api/pa/${id}/appeal`, { method: 'POST' }));
+    const r = await act(() => apiJson(`/api/pa/${id}/appeal`, { method: 'POST' }), 'Appeal letter drafted; PA moved to appealed.');
     if (r?.appeal_letter) setLetter(r.appeal_letter);
   };
 
@@ -54,7 +62,7 @@ export const PriorAuthView: React.FC<{ patients: Patient[] }> = ({ patients }) =
       subtitle="Track PAs from request to dispense. Decision timers follow CMS-0057-F (72 hours expedited, 7 days standard). Justifications are drafted from the patient's diagnoses and therapy; appeals are drafted by the LLM when configured."
       actions={<Btn variant="ghost" onClick={board.reload}><RefreshCw className="h-3.5 w-3.5 inline mr-1" />Refresh</Btn>}
     >
-      <ErrorNote error={err || board.error} />
+      <ErrorNote error={board.error && friendlyError(new Error(board.error))} />
       <Card title="New PA request">
         <div className="flex flex-wrap items-center gap-2">
           <select className={selectCls} value={pid} onChange={(e) => { setPid(e.target.value); setRxNum(''); }}>
@@ -75,7 +83,7 @@ export const PriorAuthView: React.FC<{ patients: Patient[] }> = ({ patients }) =
         {COLUMNS.map((col) => {
           const items = board.data?.columns?.[col] || [];
           return (
-            <div key={col} className="rounded-xl bg-slate-950/60 border border-slate-800 p-2.5 min-h-[180px]">
+            <div key={col} className="rounded-xl bg-slate-950/60 border border-slate-800 p-2.5 min-h-[120px]">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-[11px] font-bold text-slate-300">{col}</span>
                 <Badge>{items.length}</Badge>
@@ -102,6 +110,7 @@ export const PriorAuthView: React.FC<{ patients: Patient[] }> = ({ patients }) =
                     </div>
                   </div>
                 ))}
+                {!items.length && <p className="text-[11px] text-slate-500 px-1 py-2">None</p>}
               </div>
             </div>
           );

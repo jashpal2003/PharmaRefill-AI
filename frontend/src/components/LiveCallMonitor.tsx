@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { CheckCircle2, ShieldCheck, PhoneCall, Wifi, Radio } from 'lucide-react';
-import { TranscriptMessage, TokenItem } from '@/lib/types';
+import { Patient, TranscriptMessage, TokenItem } from '@/lib/types';
 import { AudioWaveform } from './AudioWaveform';
 import { TranscriptFeed } from './TranscriptFeed';
 
@@ -13,6 +13,7 @@ interface LiveCallMonitorProps {
   transcript: TranscriptMessage[];
   recentTokens: TokenItem[];
   retryCount: number;
+  patient?: Patient | null;
 }
 
 export const LiveCallMonitor: React.FC<LiveCallMonitorProps> = ({
@@ -21,9 +22,10 @@ export const LiveCallMonitor: React.FC<LiveCallMonitorProps> = ({
   isAgentSpeaking,
   transcript,
   recentTokens,
-  retryCount
+  retryCount,
+  patient
 }) => {
-  const isLive = Boolean(activeSessionId) || activeState !== 'DISCONNECTED';
+  const isLive = Boolean(activeSessionId) && !['IDLE', 'DISCONNECTED', 'CALL_COMPLETED'].includes(activeState);
 
   return (
     <div className="flex flex-col h-full glass-panel-elevated rounded-2xl overflow-hidden border border-slate-800/70">
@@ -45,7 +47,7 @@ export const LiveCallMonitor: React.FC<LiveCallMonitorProps> = ({
               Live Inbound Monitor
             </h2>
             <p className="text-[10px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
-              SIP Trunk · Twilio Carrier Gateway
+              Browser simulator or telephony stream
             </p>
           </div>
         </div>
@@ -77,19 +79,19 @@ export const LiveCallMonitor: React.FC<LiveCallMonitorProps> = ({
         {[
           {
             label: 'Caller ANI',
-            value: '+1 (415) 555-0192',
+            value: isLive && patient ? patient.primary_phone : '—',
             icon: <PhoneCall className="h-3 w-3" style={{ color: 'rgba(255,255,255,0.3)' }} />,
             mono: true
           },
           {
             label: 'ANI Match',
-            value: 'PAT-1001 · Eleanor Vance',
+            value: isLive && patient ? `${patient.patient_id} · ${patient.first_name} ${patient.last_name}` : isLive ? 'Not matched yet' : '—',
             icon: <CheckCircle2 className="h-3 w-3 text-blue-400" />,
             mono: false
           },
           {
             label: 'Consent',
-            value: 'Two-Party Disclosed',
+            value: isLive ? 'Recording disclosed' : '—',
             icon: <ShieldCheck className="h-3 w-3 text-slate-400" />,
             mono: false
           }

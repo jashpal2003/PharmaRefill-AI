@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { apiJson } from '@/lib/api';
+import { friendlyError } from './feedback';
 
 export function useApi<T = any>(path: string | null, deps: unknown[] = []) {
   const [data, setData] = useState<T | null>(null);
@@ -110,7 +111,7 @@ export const Btn: React.FC<React.ButtonHTMLAttributes<HTMLButtonElement> & { var
 };
 
 export const ErrorNote: React.FC<{ error: string | null }> = ({ error }) =>
-  error ? <div className="text-xs text-rose-300 bg-rose-950/40 border border-rose-500/30 rounded-lg px-3 py-2">{error}</div> : null;
+  error ? <div role="alert" className="text-xs text-rose-300 bg-rose-950/40 border border-rose-500/30 rounded-lg px-3 py-2">{friendlyError(new Error(error))}</div> : null;
 
 export const severityTone = (s?: string) =>
   s === 'CONTRAINDICATED' ? 'red' : s === 'MAJOR' ? 'amber' : s === 'MODERATE' ? 'blue' : 'slate';

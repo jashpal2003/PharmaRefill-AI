@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 import { apiJson } from '@/lib/api';
+import { friendlyError, useFeedback } from './feedback';
 import { Badge, Btn, Card, ErrorNote, riskTone, severityTone, useApi } from './ui';
 
 export const PatientInsightsPanel: React.FC<{ patientId: string; onChanged?: () => void }> = ({ patientId, onChanged }) => {
@@ -9,30 +10,49 @@ export const PatientInsightsPanel: React.FC<{ patientId: string; onChanged?: () 
   const dur = useApi<any>(`/api/clinical/dur/${patientId}`, [patientId]);
   const rtbc = useApi<any>(`/api/rtbc/${patientId}`, [patientId]);
   const [err, setErr] = useState<string | null>(null);
-  const [msg, setMsg] = useState<string | null>(null);
+  const { prompt, toast } = useFeedback();
 
   const override = async (alertKey: string) => {
-    const rationale = window.prompt('Clinical rationale for override (min 15 characters, recorded in audit trail):');
+    const rationale = await prompt({
+      title: 'Override DUR alert',
+      description: 'Record why it is clinically appropriate to proceed. This is saved to the audit trail with your name and role.',
+      label: 'Clinical rationale',
+      placeholder: 'e.g. Discussed with prescriber; benefit outweighs risk, patient counseled on sedation.',
+      multiline: true,
+      minLength: 15,
+      confirmLabel: 'Record override',
+    });
     if (!rationale) return;
     try {
       await apiJson('/api/dur/override', { method: 'POST', body: JSON.stringify({ patient_id: patientId, alert_key: alertKey, rationale }) });
+      toast('Override recorded in the audit trail.');
       dur.reload();
-    } catch (e: any) {
-      setErr(e.message);
+    } catch (e) {
+      toast(friendlyError(e), 'error');
     }
   };
 
   const swap = async (rxNumber: string) => {
-    const daw = window.prompt('DAW code on the prescription (0 = substitution allowed, 1 = prescriber requires brand):', '0');
+    const daw = await prompt({
+      title: 'Substitute generic',
+      description: 'Check the DAW (dispense as written) code on the prescription before substituting.',
+      label: 'DAW code',
+      choices: [
+        { value: '0', label: 'DAW 0: substitution allowed', hint: 'Most prescriptions' },
+        { value: '2', label: 'DAW 2: patient requested brand', hint: 'Patient may choose to switch' },
+        { value: '1', label: 'DAW 1: prescriber requires brand', hint: 'Substitution is not permitted' },
+      ],
+      confirmLabel: 'Substitute',
+    });
     if (daw == null) return;
     try {
       const r = await apiJson('/api/generic-substitution', { method: 'POST', body: JSON.stringify({ rx_number: rxNumber, daw_code: Number(daw) }) });
-      setMsg(`Switched to ${r.new_drug}; patient saves $${r.savings.toFixed(2)}. Prescriber notification queued.`);
+      toast(`Switched to ${r.new_drug}. Patient saves $${r.savings.toFixed(2)}; prescriber notification queued.`);
       rtbc.reload();
       dur.reload();
       onChanged?.();
-    } catch (e: any) {
-      setErr(e.message);
+    } catch (e) {
+      toast(friendlyError(e), 'error');
     }
   };
 
@@ -40,7 +60,6 @@ export const PatientInsightsPanel: React.FC<{ patientId: string; onChanged?: () 
   return (
     <div className="grid grid-cols-1 xl:grid-cols-3 gap-3 mt-4">
       <ErrorNote error={err} />
-      {msg && <div className="xl:col-span-3 text-xs text-emerald-200 bg-emerald-950/40 border border-emerald-500/30 rounded-lg px-3 py-2">{msg}</div>}
 
       <Card title="Adherence risk" right={a && <Badge tone={riskTone(a.risk_band)}>{a.risk_score}/100 · {a.risk_band}</Badge>}>
         {a ? (

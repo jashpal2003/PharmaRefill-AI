@@ -23,6 +23,14 @@ import { LiveCallMonitor } from './LiveCallMonitor';
 import { CallQueuePanel } from './CallQueuePanel';
 import { Patient, TranscriptMessage, TokenItem } from '@/lib/types';
 
+function ageOf(dob?: string): number | null {
+  if (!dob || dob.startsWith('*')) return null;
+  const d = new Date(dob);
+  if (isNaN(d.getTime())) return null;
+  const now = new Date();
+  return now.getFullYear() - d.getFullYear() - (now < new Date(now.getFullYear(), d.getMonth(), d.getDate()) ? 1 : 0);
+}
+
 interface Interaction {
   drug_pair: string[];
   severity: string;
@@ -71,7 +79,7 @@ export const CallCenterView: React.FC<CallCenterViewProps> = ({
   onOpenPhoneModal,
   onOpenSoapModal
 }) => {
-  const isLive = Boolean(activeSessionId) || activeState !== 'DISCONNECTED';
+  const isLive = Boolean(activeSessionId) && !['IDLE', 'DISCONNECTED', 'CALL_COMPLETED'].includes(activeState);
   const patientId = selectedPatient?.patient_id || 'PAT-1001';
 
   const [ddiData, setDdiData] = useState<DdiResponse | null>(null);
@@ -121,17 +129,17 @@ export const CallCenterView: React.FC<CallCenterViewProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-sm font-bold text-white tracking-tight">
-                Live Clinical Inbound Triage Sentinel
+                AI voice agent
               </h2>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700/60">
+              <span className="hidden lg:inline text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700/60">
                 Cartesia Sonic-2 TTS
               </span>
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700/60">
+              <span className="hidden lg:inline text-[10px] font-mono px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700/60">
                 AssemblyAI Universal-2
               </span>
             </div>
             <p className="text-xs text-slate-400 mt-0.5">
-              Autonomous clinical conversational AI agent enforcing DEA Title 21 § 1306, Med-Sync synchronization & copay locking.
+              Answers refill calls, verifies the caller, and hands controlled-substance or emergency calls to a pharmacist.
             </p>
           </div>
         </div>
@@ -169,6 +177,7 @@ export const CallCenterView: React.FC<CallCenterViewProps> = ({
             transcript={transcript}
             recentTokens={recentTokens}
             retryCount={retryCount}
+            patient={selectedPatient}
           />
         </div>
 
@@ -193,7 +202,7 @@ export const CallCenterView: React.FC<CallCenterViewProps> = ({
             {/* Profile Overview Pill */}
             <div className="flex items-center gap-3 p-3 rounded-xl bg-slate-950/50 border border-slate-800/80 mb-3.5">
               <div className="h-10 w-10 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-300 font-bold text-sm">
-                {selectedPatient ? selectedPatient.first_name[0] : 'E'}
+                {selectedPatient ? `${selectedPatient.first_name[0]}${selectedPatient.last_name[0]}` : '?'}
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between">
@@ -201,11 +210,11 @@ export const CallCenterView: React.FC<CallCenterViewProps> = ({
                     {selectedPatient ? `${selectedPatient.first_name} ${selectedPatient.last_name}` : 'No patient selected'}
                   </h3>
                   <span className="text-[10px] font-mono text-slate-400">
-                    {selectedPatient?.patient_id || 'PAT-1001'}
+                    {selectedPatient?.patient_id || ''}
                   </span>
                 </div>
                 <p className="text-[11px] text-slate-400 truncate">
-                  DOB: {selectedPatient?.dob || '1958-04-12'} (Age 68) • Female
+                  {selectedPatient ? `DOB ${selectedPatient.dob}${ageOf(selectedPatient.dob) != null ? ` · age ${ageOf(selectedPatient.dob)}` : ''}` : 'Choose a patient from the header'}
                 </p>
               </div>
             </div>

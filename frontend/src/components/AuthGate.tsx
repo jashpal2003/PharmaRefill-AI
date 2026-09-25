@@ -51,12 +51,12 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
   };
 
   if (!ready) {
-    return <div className="h-screen flex items-center justify-center bg-[#060c18] text-slate-400"><Loader2 className="h-6 w-6 animate-spin" /></div>;
+    return <div className="h-screen flex items-center justify-center bg-[var(--bg-main)] text-slate-400"><Loader2 className="h-6 w-6 animate-spin" /></div>;
   }
   if (supabase && !session) return <LoginView />;
   if (meError) {
     return (
-      <div className="h-screen flex flex-col items-center justify-center gap-3 bg-[#060c18] text-slate-300 p-6 text-center">
+      <div className="h-screen flex flex-col items-center justify-center gap-3 bg-[var(--bg-main)] text-slate-300 p-6 text-center">
         <ShieldCheck className="h-8 w-8 text-amber-400" />
         <p className="text-sm max-w-md">
           {meError.startsWith('401')
@@ -68,7 +68,7 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
     );
   }
   if (!me) {
-    return <div className="h-screen flex items-center justify-center bg-[#060c18] text-slate-400"><Loader2 className="h-6 w-6 animate-spin" /></div>;
+    return <div className="h-screen flex items-center justify-center bg-[var(--bg-main)] text-slate-400"><Loader2 className="h-6 w-6 animate-spin" /></div>;
   }
   return <AuthContext.Provider value={{ me, signOut }}>{children}</AuthContext.Provider>;
 };
@@ -90,7 +90,7 @@ const LoginView: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#060c18] p-4">
+    <div className="min-h-screen flex items-center justify-center bg-[var(--bg-main)] p-4">
       <form onSubmit={submit} className="w-full max-w-sm rounded-2xl border border-slate-800 bg-slate-900/80 p-6 space-y-4 text-slate-100">
         <div className="flex items-center gap-2">
           <ShieldCheck className="h-6 w-6 text-blue-400" />

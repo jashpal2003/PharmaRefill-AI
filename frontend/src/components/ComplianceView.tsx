@@ -5,9 +5,12 @@ import { ShieldCheck } from 'lucide-react';
 import { apiJson } from '@/lib/api';
 import { Patient } from '@/lib/types';
 import { Badge, Btn, Card, ErrorNote, ViewShell, selectCls, useApi } from './ui';
+import { useAuth } from './AuthGate';
 
 export const ComplianceView: React.FC<{ patients: Patient[] }> = ({ patients }) => {
-  const [tab, setTab] = useState<'AUDIT' | 'DUR' | 'SDOH'>('AUDIT');
+  const { me } = useAuth();
+  const isAdmin = me?.role === 'admin';
+  const [tab, setTab] = useState<'AUDIT' | 'DUR' | 'SDOH'>(isAdmin ? 'AUDIT' : 'DUR');
   const log = useApi<any>(tab === 'AUDIT' ? '/api/audit-log?limit=300' : null, [tab]);
   const retro = useApi<any>(tab === 'DUR' ? '/api/dur/retrospective' : null, [tab]);
   const sdohQ = useApi<any>(tab === 'SDOH' ? '/api/sdoh/questions' : null, [tab]);
@@ -38,7 +41,7 @@ export const ComplianceView: React.FC<{ patients: Patient[] }> = ({ patients }) 
       subtitle="HIPAA access log (append-only, enforced by database triggers) with breach heuristics, retrospective DUR across all patients, and AHC-HRSN social-needs screening exported as a FHIR Observation."
       actions={
         <div className="flex gap-1 p-1 rounded-xl bg-slate-900 border border-slate-800 text-xs">
-          {([['AUDIT', 'Access log'], ['DUR', 'Retrospective DUR'], ['SDOH', 'SDOH screening']] as const).map(([k, l]) => (
+          {([['AUDIT', 'Access log'], ['DUR', 'Retrospective DUR'], ['SDOH', 'SDOH screening']] as const).filter(([k]) => isAdmin || k !== 'AUDIT').map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)} className={`px-3 py-1.5 rounded-lg font-semibold cursor-pointer ${tab === k ? 'bg-slate-800 text-white' : 'text-slate-400'}`}>{l}</button>
           ))}
         </div>

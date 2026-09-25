@@ -1,6 +1,6 @@
 'use client';
 
-import { apiFetch } from '@/lib/api';
+import { apiFetch, apiJson } from '@/lib/api';
 import React, { useState } from 'react';
 import { Header } from '@/components/Header';
 import { Sidebar, ActiveNavView } from '@/components/Sidebar';
@@ -26,11 +26,14 @@ import { InventoryView } from '@/components/InventoryView';
 import { ComplianceView } from '@/components/ComplianceView';
 import { WarmTransferModal } from '@/components/WarmTransferModal';
 import { AuthGate } from '@/components/AuthGate';
+import { FeedbackProvider, friendlyError, useFeedback } from '@/components/feedback';
 
 export default function Page() {
   return (
     <AuthGate>
-      <PharmacistCockpit />
+      <FeedbackProvider>
+        <PharmacistCockpit />
+      </FeedbackProvider>
     </AuthGate>
   );
 }
@@ -65,6 +68,7 @@ function PharmacistCockpit() {
   } = useDashboardSocket();
 
   const [activeView, setActiveView] = useState<ActiveNavView>('CALL_CENTER');
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [isPhoneModalOpen, setIsPhoneModalOpen] = useState(false);
   const [isBenchmarkModalOpen, setIsBenchmarkModalOpen] = useState(false);
   const [isSnapModalOpen, setIsSnapModalOpen] = useState(false);
@@ -72,14 +76,17 @@ function PharmacistCockpit() {
   const [isSoapModalOpen, setIsSoapModalOpen] = useState(false);
 
   const queuedOrdersCount = orders.filter((o) => o.status === 'QUEUED_FOR_FILL').length;
-  const isCallActive = Boolean(activeSessionId) || activeState !== 'DISCONNECTED';
+  // A call is live only while a session exists and hasn't ended. ("IDLE" used to count as live.)
+  const isCallActive = Boolean(activeSessionId) && !['IDLE', 'DISCONNECTED', 'CALL_COMPLETED'].includes(activeState);
+  const { toast } = useFeedback();
 
   const handleDispenseAll = async () => {
     try {
-      await apiFetch('/api/orders/dispense-all', { method: 'POST' });
+      const r = await apiJson<{ dispensed: number }>('/api/orders/dispense-all', { method: 'POST' });
+      toast(r.dispensed ? `Dispensed ${r.dispensed} order${r.dispensed > 1 ? 's' : ''}. Refill counts and fill history updated.` : 'Nothing was queued for fill.', r.dispensed ? 'success' : 'info');
       refreshData();
     } catch (e) {
-      console.error(e);
+      toast(friendlyError(e), 'error');
     }
   };
 
@@ -95,27 +102,32 @@ function PharmacistCockpit() {
       a.download = `FHIR_Bundle_${ptId}_${Date.now()}.json`;
       a.click();
       URL.revokeObjectURL(url);
+      toast(`FHIR R4 bundle for ${ptId} downloaded.`);
     } catch (e) {
-      console.error(e);
+      toast(friendlyError(e), 'error');
     }
   };
 
   const handleResetDemo = async () => {
     try {
-      await apiFetch('/api/reset-demo', { method: 'POST' });
+      await apiJson('/api/reset-demo', { method: 'POST' });
+      toast('Demo data reset to the original seed.');
       refreshData();
     } catch (e) {
-      console.error(e);
+      toast(friendlyError(e), 'error');
     }
   };
 
   return (
-    <div className="h-screen w-screen flex text-slate-100 selection:bg-blue-600/30 selection:text-white font-sans overflow-hidden" style={{ background: '#060c18' }}>
+    <div className="h-screen w-screen flex font-sans overflow-hidden text-body" style={{ background: 'var(--bg-main)' }}>
       {/* Left Navigation Sidebar (Full Height 100vh) */}
       <Sidebar
         activeView={activeView}
         onSelectView={setActiveView}
         isCallActive={isCallActive}
+        isConnected={isConnected}
+        mobileOpen={mobileNavOpen}
+        onCloseMobile={() => setMobileNavOpen(false)}
         queuedOrdersCount={queuedOrdersCount}
         consultationsCount={consultations.length}
       />
@@ -134,11 +146,13 @@ function PharmacistCockpit() {
           onOpenSmsModal={() => setIsSmsModalOpen(true)}
           onOpenSoapModal={() => setIsSoapModalOpen(true)}
           onResetDemo={handleResetDemo}
+          onNavigate={setActiveView}
+          onOpenMobileNav={() => setMobileNavOpen(true)}
           activeView={activeView}
         />
 
         {/* Dynamic Workspace View Container */}
-        <main className="flex-1 overflow-y-auto pb-20 relative" style={{ background: '#060c18' }}>
+        <main className="flex-1 overflow-y-auto pb-20 relative" style={{ background: 'var(--bg-main)' }}>
           {activeView === 'CALL_CENTER' && (
             <CallCenterView
               activeSessionId={activeSessionId}

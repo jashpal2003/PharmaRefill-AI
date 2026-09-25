@@ -1,297 +1,292 @@
 'use client';
 
-import { useAuth } from './AuthGate';
-
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
-  PhoneCall,
   BarChart2,
   Camera,
-  Search,
-  Command,
-  ChevronRight,
-  Sun,
-  Moon,
-  MessageSquare,
-  FileText,
-  RotateCcw,
   ChevronDown,
-  User,
-  Wifi,
-  WifiOff
+  FileText,
+  LogOut,
+  MessageSquare,
+  Moon,
+  PhoneCall,
+  RotateCcw,
+  Menu,
+  Search,
+  Sun,
+  Wrench,
 } from 'lucide-react';
 import { Patient } from '@/lib/types';
-import { ActiveNavView } from './Sidebar';
 import { useTheme } from '@/hooks/useTheme';
+import { useAuth } from './AuthGate';
+import { useFeedback } from './feedback';
+import { ActiveNavView, NAV_ITEMS } from './Sidebar';
 
 interface HeaderProps {
   isConnected: boolean;
   patients: Patient[];
   selectedPatient: Patient | null;
   onSelectPatient: (patientId: string) => void;
+  onNavigate: (view: ActiveNavView) => void;
   onOpenPhoneModal: () => void;
   onOpenBenchmarkModal: () => void;
   onOpenSnapModal: () => void;
-  onOpenSmsModal?: () => void;
-  onOpenSoapModal?: () => void;
+  onOpenSmsModal: () => void;
+  onOpenSoapModal: () => void;
   onResetDemo: () => void;
-  activeView?: ActiveNavView;
+  onOpenMobileNav: () => void;
+  activeView: ActiveNavView;
 }
 
-const VIEW_META: Record<ActiveNavView, { category: string; title: string; subtitle: string }> = {
-  CALL_CENTER:    { category: 'Clinical Operations', title: 'Live Voice Triage', subtitle: 'Cartesia Sonic-2 · AssemblyAI streaming STT · measured latency in Analytics' },
-  DISPENSE_QUEUE: { category: 'Pharmacy Fulfillment', title: 'Dispense & Verification Queue', subtitle: 'Pre-flight safety checks, Med-Sync batching' },
-  PATIENT_REGISTRY: { category: 'Clinical EHR', title: 'Patient Registry & Med-Sync', subtitle: 'Longitudinal profiles, payer coverage & Rx alignment' },
-  CONSULTATIONS:  { category: 'Clinical Pharmacist', title: 'Consultations & CMR', subtitle: 'MTM scheduling and pharmacist follow-up tracking' },
-  BILLING:        { category: 'Revenue Cycle', title: 'Billing, Copay & Adjudication', subtitle: 'Real-time Medicare Part D & commercial copay calculations' },
-  CLINICAL_AUDITS: { category: 'Quality Assurance', title: 'LLM Call Audits & Safety', subtitle: 'Title 21 CFR § 1306 · HIPAA · Clinical safety sentinel' },
-  VOICE_SETTINGS: { category: 'System Config', title: 'Voice AI & Telephony Settings', subtitle: 'Cartesia voice models, AssemblyAI params & prompt tuning' },
-  ANALYTICS:      { category: 'Operations', title: 'Analytics', subtitle: 'Containment, handle time, measured latency, Star adherence' },
-  INVENTORY:      { category: 'Operations', title: 'Inventory & 340B', subtitle: 'Lot-level stock, expiry horizons, 340B claim routing' },
-  IMMUNIZATIONS:  { category: 'Clinical', title: 'Immunizations', subtitle: 'ACIP schedule, pre-screening, HL7 VXU registry messages' },
-  OUTREACH:       { category: 'Clinical', title: 'Proactive Outreach', subtitle: 'Refill, adherence, flu and CMR campaigns with opt-out' },
-  PRIOR_AUTH:     { category: 'Revenue Cycle', title: 'Prior Authorizations', subtitle: 'PA board with CMS-0057-F decision timers and appeals' },
-  COMPLIANCE:     { category: 'Quality Assurance', title: 'HIPAA & Compliance', subtitle: 'Immutable access log, retrospective DUR, SDOH screening' }
+export const VIEW_META: Record<ActiveNavView, { section: string; title: string }> = {
+  CALL_CENTER: { section: 'Operations', title: 'Live voice & triage' },
+  DISPENSE_QUEUE: { section: 'Operations', title: 'Prescription queue' },
+  ANALYTICS: { section: 'Operations', title: 'Analytics' },
+  INVENTORY: { section: 'Operations', title: 'Inventory & 340B' },
+  PATIENT_REGISTRY: { section: 'Clinical', title: 'Patients & Med-Sync' },
+  CONSULTATIONS: { section: 'Clinical', title: 'Clinical consults' },
+  IMMUNIZATIONS: { section: 'Clinical', title: 'Immunizations' },
+  OUTREACH: { section: 'Clinical', title: 'Proactive outreach' },
+  BILLING: { section: 'Finance & QA', title: 'Billing & copays' },
+  PRIOR_AUTH: { section: 'Finance & QA', title: 'Prior authorizations' },
+  CLINICAL_AUDITS: { section: 'Finance & QA', title: 'Call audits & safety' },
+  COMPLIANCE: { section: 'Finance & QA', title: 'HIPAA & compliance' },
+  VOICE_SETTINGS: { section: 'System', title: 'Voice AI studio' },
 };
 
-export const Header: React.FC<HeaderProps> = ({
-  isConnected,
-  patients,
-  selectedPatient,
-  onSelectPatient,
-  onOpenPhoneModal,
-  onOpenBenchmarkModal,
-  onOpenSnapModal,
-  onOpenSmsModal,
-  onOpenSoapModal,
-  onResetDemo,
-  activeView = 'CALL_CENTER'
-}) => {
-  const meta = VIEW_META[activeView] || VIEW_META.CALL_CENTER;
-  const { theme, toggleTheme } = useTheme();
+/** Closes a popover on outside click / Escape. */
+function usePopover() {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => ref.current && !ref.current.contains(e.target as Node) && setOpen(false);
+    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDown);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+  return { open, setOpen, ref };
+}
 
+export const Header: React.FC<HeaderProps> = (props) => {
+  const { activeView, isConnected } = props;
+  const meta = VIEW_META[activeView];
   return (
-    <header className="h-14 px-5 flex items-center justify-between gap-4 sticky top-0 z-30 shrink-0 header-root">
-
-      {/* Left: Breadcrumb + View Title */}
-      <div className="flex items-center gap-3 min-w-0 flex-1">
-        {/* Connection status */}
-        <div className="flex items-center gap-1.5 shrink-0">
-          <div className="relative">
-            {isConnected ? (
-              <Wifi className="h-3.5 w-3.5 text-emerald-400" />
-            ) : (
-              <WifiOff className="h-3.5 w-3.5 text-rose-400" />
-            )}
-          </div>
+    <header className="header-root h-14 px-4 lg:px-5 flex items-center gap-3 sticky top-0 z-30 shrink-0 border-b border-subtle">
+      <div className="flex items-center gap-2.5 min-w-0 flex-1">
+        <div className="md:hidden shrink-0">
+          <button onClick={props.onOpenMobileNav} className="icon-btn" aria-label="Open menu">
+            <Menu className="h-4 w-4" />
+          </button>
         </div>
-
-        <div className="h-5 w-px shrink-0" style={{ background: 'rgba(255,255,255,0.08)' }} />
-
-        {/* Breadcrumb */}
-        <div className="flex flex-col min-w-0">
-          <div className="flex items-center gap-1.5 text-[10.5px] font-medium" style={{ color: 'rgba(255,255,255,0.35)' }}>
-            <span>{meta.category}</span>
-            <ChevronRight className="h-3 w-3" style={{ color: 'rgba(255,255,255,0.2)' }} />
-            <span className="font-semibold truncate" style={{ color: 'rgba(255,255,255,0.7)' }}>{meta.title}</span>
-          </div>
-          <p className="text-[10px] truncate hidden xl:block" style={{ color: 'rgba(255,255,255,0.25)' }}>
-            {meta.subtitle}
-          </p>
+        <span
+          className={`h-2 w-2 rounded-full shrink-0 ${isConnected ? 'bg-emerald-400' : 'bg-rose-400 animate-pulse'}`}
+          title={isConnected ? 'Live updates connected' : 'Live updates disconnected: reconnecting'}
+          aria-label={isConnected ? 'Live updates connected' : 'Live updates disconnected'}
+        />
+        <div className="min-w-0">
+          <div className="text-[11px] text-muted leading-none">{meta.section}</div>
+          <h1 className="text-sm font-semibold text-strong truncate leading-tight mt-0.5">{meta.title}</h1>
         </div>
       </div>
 
-      {/* Center: Universal Search */}
-      <div className="hidden md:flex items-center flex-shrink-0 w-[280px] lg:w-[340px]">
-        <div className="w-full relative flex items-center">
-          <Search className="absolute left-3 h-3.5 w-3.5 pointer-events-none" style={{ color: 'rgba(255,255,255,0.25)' }} />
-          <input
-            type="text"
-            readOnly
-            placeholder="Search patient, NDC, Rx# or guideline..."
-            onClick={onOpenPhoneModal}
-            className="w-full h-8 pl-8.5 pr-14 rounded-xl text-[11.5px] placeholder:font-normal cursor-pointer outline-none transition-all"
-            style={{
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              color: 'rgba(255,255,255,0.6)',
-              paddingLeft: '34px'
-            }}
-          />
-          <div className="absolute right-2.5 flex items-center gap-0.5 px-1.5 py-0.5 rounded-md"
-            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
-            <Command className="h-2.5 w-2.5" style={{ color: 'rgba(255,255,255,0.3)' }} />
-            <span className="text-[9px] font-mono" style={{ color: 'rgba(255,255,255,0.3)' }}>K</span>
-          </div>
-        </div>
-      </div>
+      <GlobalSearch {...props} />
 
-      {/* Right: Controls + Actions */}
       <div className="flex items-center gap-1.5 shrink-0">
-
-        {/* Theme Toggle */}
-        <button
-          onClick={toggleTheme}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[11px] font-medium transition-all duration-200 cursor-pointer"
-          style={{
-            background: 'rgba(255,255,255,0.04)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            color: 'rgba(255,255,255,0.55)'
-          }}
-          title={theme === 'dark' ? 'Switch to Clinical Light Mode' : 'Switch to Executive Dark Mode'}
-        >
-          {theme === 'dark' ? (
-            <>
-              <Sun className="h-3.5 w-3.5 text-amber-400" />
-              <span className="hidden lg:inline">Clinical</span>
-            </>
-          ) : (
-            <>
-              <Moon className="h-3.5 w-3.5 text-indigo-400" />
-              <span className="hidden lg:inline text-slate-600">Executive</span>
-            </>
-          )}
-        </button>
-
-        {/* SMS & Lockers */}
-        {onOpenSmsModal && (
-          <button
-            onClick={onOpenSmsModal}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[11px] font-medium transition-all duration-200 cursor-pointer"
-            style={{
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              color: 'rgba(255,255,255,0.55)'
-            }}
-            title="Outbound SMS & Drive-Thru Locker"
-          >
-            <MessageSquare className="h-3.5 w-3.5 text-blue-400" />
-            <span className="hidden xl:inline">SMS</span>
-          </button>
-        )}
-
-        {/* SOAP Notes */}
-        {onOpenSoapModal && (
-          <button
-            onClick={onOpenSoapModal}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[11px] font-medium transition-all duration-200 cursor-pointer"
-            style={{
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              color: 'rgba(255,255,255,0.55)'
-            }}
-            title="Generate SOAP Note"
-          >
-            <FileText className="h-3.5 w-3.5 text-purple-400" />
-            <span className="hidden xl:inline">SOAP</span>
-          </button>
-        )}
-
-        {/* WER Benchmark */}
-        <button
-          onClick={onOpenBenchmarkModal}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[11px] font-mono font-medium transition-all duration-200 cursor-pointer"
-          style={{
-            background: 'rgba(255,255,255,0.04)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            color: 'rgba(255,255,255,0.55)'
-          }}
-          title="AssemblyAI WER Benchmarks"
-        >
-          <BarChart2 className="h-3.5 w-3.5" style={{ color: 'rgba(255,255,255,0.4)' }} />
-          <span className="hidden sm:inline">WER Benchmark</span>
-        </button>
-
-        {/* Snap Verify */}
-        <button
-          onClick={onOpenSnapModal}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-[11px] font-medium transition-all duration-200 cursor-pointer"
-          style={{
-            background: 'rgba(255,255,255,0.04)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            color: 'rgba(255,255,255,0.55)'
-          }}
-          title="Snap-to-Verify Rx Label"
-        >
-          <Camera className="h-3.5 w-3.5" style={{ color: 'rgba(255,255,255,0.4)' }} />
-          <span className="hidden xl:inline">Snap</span>
-        </button>
-
-        {/* Divider */}
-        <div className="h-5 w-px" style={{ background: 'rgba(255,255,255,0.08)' }} />
-
-        {/* Patient Selector */}
-        {patients.length > 0 && (
-          <div
-            className="flex items-center gap-2 rounded-xl px-2.5 py-1.5 cursor-pointer transition-all duration-150"
-            style={{
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.09)'
-            }}
-          >
-            <div className="h-5 w-5 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0"
-              style={{ background: 'rgba(59,130,246,0.2)', color: '#93C5FD', border: '1px solid rgba(59,130,246,0.25)' }}>
-              {selectedPatient ? selectedPatient.first_name[0] : 'P'}
-            </div>
-            <select
-              value={selectedPatient?.patient_id || 'PAT-1001'}
-              onChange={(e) => onSelectPatient(e.target.value)}
-              className="bg-transparent text-[11px] font-medium focus:outline-none cursor-pointer pr-0.5"
-              style={{ color: 'rgba(255,255,255,0.65)' }}
-              title="Switch Active Patient"
-            >
-              {patients.map((p) => (
-                <option key={p.patient_id} value={p.patient_id} className="bg-slate-900 text-white">
-                  {p.first_name} {p.last_name}
-                </option>
-              ))}
-            </select>
-          </div>
-        )}
-
-        {/* Primary Softphone CTA */}
-        <button
-          onClick={onOpenPhoneModal}
-          className="flex items-center gap-2 px-4 py-1.5 rounded-xl text-white font-semibold text-[12px] transition-all duration-200 cursor-pointer active:scale-95"
-          style={{
-            background: 'linear-gradient(135deg, #3B82F6 0%, #2563EB 100%)',
-            border: '1px solid rgba(59,130,246,0.5)',
-            boxShadow: '0 4px 14px -2px rgba(59,130,246,0.4), 0 0 0 1px rgba(255,255,255,0.06) inset'
-          }}
-        >
+        <PatientPicker {...props} />
+        <ToolsMenu {...props} />
+        <button onClick={props.onOpenPhoneModal} className="btn btn-primary !py-1.5">
           <PhoneCall className="h-3.5 w-3.5" />
-          <span>Softphone</span>
+          <span className="hidden sm:inline">Softphone</span>
         </button>
-
-        {/* Reset */}
-        <button
-          onClick={onResetDemo}
-          className="p-2 rounded-xl transition-all duration-150 cursor-pointer"
-          style={{
-            background: 'rgba(255,255,255,0.04)',
-            border: '1px solid rgba(255,255,255,0.08)',
-            color: 'rgba(255,255,255,0.3)'
-          }}
-          title="Reset Demo State"
-        >
-          <RotateCcw className="h-3.5 w-3.5" />
-        </button>
+        <UserMenu onResetDemo={props.onResetDemo} />
       </div>
-      <UserChip />
     </header>
   );
 };
 
-const UserChip: React.FC = () => {
-  const { me, signOut } = useAuth();
-  if (!me) return null;
+const GlobalSearch: React.FC<HeaderProps> = ({ patients, onSelectPatient, onNavigate }) => {
+  const { open, setOpen, ref } = usePopover();
+  const [q, setQ] = useState('');
+  const [active, setActive] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        inputRef.current?.focus();
+        setOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [setOpen]);
+
+  const results = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    const pts = patients
+      .filter((p) => !term || `${p.first_name} ${p.last_name} ${p.primary_phone} ${p.patient_id}`.toLowerCase().includes(term))
+      .slice(0, 6)
+      .map((p) => ({ key: p.patient_id, kind: 'Patient', label: `${p.first_name} ${p.last_name}`, hint: p.patient_id,
+        run: () => { onSelectPatient(p.patient_id); onNavigate('PATIENT_REGISTRY'); } }));
+    const views = NAV_ITEMS
+      .filter((v) => term && v.label.toLowerCase().includes(term))
+      .map((v) => ({ key: v.id, kind: 'Go to', label: v.label, hint: '', run: () => onNavigate(v.id) }));
+    return [...pts, ...views];
+  }, [q, patients, onSelectPatient, onNavigate]);
+
+  const choose = (i: number) => {
+    results[i]?.run();
+    setQ('');
+    setOpen(false);
+    inputRef.current?.blur();
+  };
+
   return (
-    <div className="flex items-center gap-2 pl-3 ml-1 border-l border-slate-800 text-[11px]">
-      <div className="text-right leading-tight hidden md:block">
-        <div className="text-slate-200">{me.email || 'Service account'}</div>
-        <div className="text-slate-500 uppercase font-mono">{me.role}{me.phi_masked ? ' · PHI masked' : ''}</div>
-      </div>
-      <button onClick={signOut} className="px-2 py-1 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer" title="Sign out">Sign out</button>
+    <div ref={ref} className="relative hidden md:block w-[260px] lg:w-[320px]">
+      <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted pointer-events-none" />
+      <input
+        ref={inputRef}
+        value={q}
+        onChange={(e) => { setQ(e.target.value); setActive(0); setOpen(true); }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.min(a + 1, results.length - 1)); }
+          if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)); }
+          if (e.key === 'Enter') { e.preventDefault(); choose(active); }
+        }}
+        placeholder="Search patients or screens"
+        aria-label="Search patients or screens"
+        role="combobox"
+        aria-expanded={open}
+        aria-controls="global-search-results"
+        className="field w-full !py-1.5 !pl-8 !pr-12 !text-xs"
+      />
+      <kbd className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-muted border border-subtle rounded px-1.5 py-0.5 pointer-events-none">Ctrl K</kbd>
+      {open && (
+        <div id="global-search-results" role="listbox" className="menu left-0 right-0 mt-1.5">
+          {results.length ? results.map((r, i) => (
+            <button key={`${r.kind}-${r.key}`} role="option" aria-selected={i === active} data-active={i === active}
+              onMouseEnter={() => setActive(i)} onClick={() => choose(i)} className="menu-item">
+              <span className="text-[10px] uppercase tracking-wide text-muted w-12 shrink-0">{r.kind}</span>
+              <span className="truncate">{r.label}</span>
+              {r.hint && <span className="hint font-mono">{r.hint}</span>}
+            </button>
+          )) : <div className="px-3 py-2.5 text-xs text-muted">No matches for “{q}”</div>}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const PatientPicker: React.FC<HeaderProps> = ({ patients, selectedPatient, onSelectPatient }) => {
+  const { open, setOpen, ref } = usePopover();
+  if (!patients.length) return null;
+  const current = selectedPatient || patients[0];
+  return (
+    <div ref={ref} className="relative">
+      <button onClick={() => setOpen(!open)} className="btn btn-ghost !py-1.5 !px-2.5 max-w-[190px]" aria-haspopup="listbox" aria-expanded={open}
+        title="Active patient: context for SOAP, SMS and clinical checks">
+        <span className="h-5 w-5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-bold flex items-center justify-center shrink-0">
+          {current.first_name[0]}{current.last_name[0]}
+        </span>
+        <span className="truncate hidden lg:inline">{current.first_name} {current.last_name}</span>
+        <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted" />
+      </button>
+      {open && (
+        <div role="listbox" aria-label="Choose active patient" className="menu right-0 mt-1.5">
+          <div className="px-2.5 pt-1 pb-1.5 text-[10px] uppercase tracking-wide text-muted">Active patient</div>
+          {patients.map((p) => (
+            <button key={p.patient_id} role="option" aria-selected={p.patient_id === current.patient_id} data-active={p.patient_id === current.patient_id}
+              onClick={() => { onSelectPatient(p.patient_id); setOpen(false); }} className="menu-item">
+              <span>{p.first_name} {p.last_name}</span>
+              <span className="hint font-mono">{p.patient_id}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const ToolsMenu: React.FC<HeaderProps> = ({ onOpenSmsModal, onOpenSoapModal, onOpenSnapModal, onOpenBenchmarkModal }) => {
+  const { open, setOpen, ref } = usePopover();
+  const tools = [
+    { icon: FileText, label: 'Draft SOAP note', hint: 'Active patient', run: onOpenSoapModal },
+    { icon: MessageSquare, label: 'SMS & pickup locker', hint: 'Outbox', run: onOpenSmsModal },
+    { icon: Camera, label: 'Snap-to-Verify', hint: 'NDC barcode', run: onOpenSnapModal },
+    { icon: BarChart2, label: 'Speech accuracy (WER)', hint: 'Benchmark', run: onOpenBenchmarkModal },
+  ];
+  return (
+    <div ref={ref} className="relative">
+      <button onClick={() => setOpen(!open)} className="btn btn-ghost !py-1.5 !px-2.5" aria-haspopup="menu" aria-expanded={open}>
+        <Wrench className="h-3.5 w-3.5" />
+        <span className="hidden xl:inline">Tools</span>
+        <ChevronDown className="h-3.5 w-3.5 text-muted" />
+      </button>
+      {open && (
+        <div role="menu" className="menu right-0 mt-1.5">
+          {tools.map((t) => (
+            <button key={t.label} role="menuitem" onClick={() => { setOpen(false); t.run(); }} className="menu-item">
+              <t.icon className="h-4 w-4 text-muted" />
+              <span>{t.label}</span>
+              <span className="hint">{t.hint}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const UserMenu: React.FC<{ onResetDemo: () => void }> = ({ onResetDemo }) => {
+  const { me, signOut } = useAuth();
+  const { theme, toggleTheme } = useTheme();
+  const { confirm } = useFeedback();
+  const { open, setOpen, ref } = usePopover();
+  if (!me) return null;
+  const initials = (me.email || 'SA').slice(0, 2).toUpperCase();
+
+  const reset = async () => {
+    setOpen(false);
+    if (await confirm({
+      title: 'Reset demo data?',
+      description: 'All patients, prescriptions, orders and calls are replaced with the original demo seed. The HIPAA access log is kept.',
+      confirmLabel: 'Reset data', danger: true,
+    })) onResetDemo();
+  };
+
+  return (
+    <div ref={ref} className="relative">
+      <button onClick={() => setOpen(!open)} className="h-8 w-8 rounded-full bg-indigo-500/20 text-indigo-200 text-[11px] font-bold border border-indigo-400/30 cursor-pointer"
+        aria-haspopup="menu" aria-expanded={open} aria-label={`Account menu for ${me.email || 'service account'}`}>
+        {initials}
+      </button>
+      {open && (
+        <div role="menu" className="menu right-0 mt-1.5 w-64">
+          <div className="px-2.5 py-2 border-b border-subtle mb-1">
+            <div className="text-sm text-strong truncate">{me.email || 'Service account'}</div>
+            <div className="text-xs text-muted capitalize">{me.role}{me.phi_masked ? ' · patient details masked' : ''}</div>
+          </div>
+          <button role="menuitem" onClick={toggleTheme} className="menu-item">
+            {theme === 'dark' ? <Sun className="h-4 w-4 text-muted" /> : <Moon className="h-4 w-4 text-muted" />}
+            {theme === 'dark' ? 'Light theme' : 'Dark theme'}
+          </button>
+          {me.role === 'admin' && (
+            <button role="menuitem" onClick={reset} className="menu-item">
+              <RotateCcw className="h-4 w-4 text-muted" /> Reset demo data
+            </button>
+          )}
+          <button role="menuitem" onClick={signOut} className="menu-item">
+            <LogOut className="h-4 w-4 text-muted" /> Sign out
+          </button>
+        </div>
+      )}
     </div>
   );
 };

@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { Megaphone, Send } from 'lucide-react';
 import { apiJson } from '@/lib/api';
+import { friendlyError, useFeedback } from './feedback';
 import { Badge, Btn, Card, ErrorNote, ViewShell, riskTone, selectCls, useApi } from './ui';
 
 const TEMPLATES: Record<string, string> = {
@@ -20,28 +21,37 @@ export const OutreachView: React.FC = () => {
   const [tpl, setTpl] = useState(TEMPLATES.REFILL_REMINDER);
   const [err, setErr] = useState<string | null>(null);
   const [preview, setPreview] = useState<string[] | null>(null);
+  const { toast, confirm } = useFeedback();
 
   const create = async () => {
     try {
       setErr(null);
       const r = await apiJson('/api/outreach', { method: 'POST', body: JSON.stringify({ name: name || campaigns.data?.types?.[type] || type, campaign_type: type, message_template: tpl }) });
       setPreview(r.targets);
+      toast(`Campaign drafted for ${r.target_count} patient${r.target_count === 1 ? '' : 's'}. Review, then send.`, 'info');
       campaigns.reload();
-    } catch (e: any) {
-      setErr(e.message);
+    } catch (e) {
+      toast(friendlyError(e), 'error');
     }
   };
-  const send = async (id: string) => {
+  const send = async (id: string, count: number) => {
+    if (!(await confirm({ title: 'Send this campaign?', description: `Text messages go to up to ${count} patients now. Patients who opted out are skipped automatically.`, confirmLabel: 'Send messages' }))) return;
     try {
-      await apiJson(`/api/outreach/${id}/send`, { method: 'POST' });
+      const r = await apiJson(`/api/outreach/${id}/send`, { method: 'POST' });
+      toast(`Sent ${r.sent} message${r.sent === 1 ? '' : 's'}${r.skipped_opt_out ? `; skipped ${r.skipped_opt_out} opted-out` : ''}.`);
       campaigns.reload();
-    } catch (e: any) {
-      setErr(e.message);
+    } catch (e) {
+      toast(friendlyError(e), 'error');
     }
   };
   const optOut = async (pid: string, opt: boolean) => {
-    await apiJson('/api/outreach/opt-out', { method: 'POST', body: JSON.stringify({ patient_id: pid, opt_out: opt }) });
-    adherence.reload();
+    try {
+      await apiJson('/api/outreach/opt-out', { method: 'POST', body: JSON.stringify({ patient_id: pid, opt_out: opt }) });
+      toast(opt ? 'Patient opted out of SMS.' : 'Patient opted back in to SMS.');
+      adherence.reload();
+    } catch (e) {
+      toast(friendlyError(e), 'error');
+    }
   };
 
   return (
@@ -94,7 +104,7 @@ export const OutreachView: React.FC = () => {
                 <td className="text-center font-mono">{c.sent_count}</td>
                 <td className="text-center font-mono">{c.skipped_opt_out}</td>
                 <td className="text-center"><Badge tone={c.status === 'SENT' ? 'green' : 'slate'}>{c.status}</Badge></td>
-                <td className="text-right">{c.status !== 'SENT' && <Btn className="!px-2 !py-1" onClick={() => send(c.campaign_id)}><Send className="h-3 w-3 inline mr-1" />Send</Btn>}</td>
+                <td className="text-right">{c.status !== 'SENT' && <Btn className="!px-2 !py-1" onClick={() => send(c.campaign_id, c.target_count)}><Send className="h-3 w-3 inline mr-1" />Send</Btn>}</td>
               </tr>
             ))}
           </tbody>

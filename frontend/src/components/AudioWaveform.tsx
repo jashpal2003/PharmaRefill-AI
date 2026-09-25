@@ -128,7 +128,7 @@ export const AudioWaveform: React.FC<AudioWaveformProps> = ({
           style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', color: 'rgba(255,255,255,0.3)' }}
         >
           <Activity className="h-2.5 w-2.5 text-blue-400" />
-          <span>99.4%</span>
+          <span>VAD</span>
         </div>
       </div>
     </div>
