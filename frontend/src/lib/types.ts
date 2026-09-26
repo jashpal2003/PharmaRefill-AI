@@ -111,6 +111,9 @@ export interface LeMURAudit {
   pickup_window_committed?: string | null;
   pharmacist_action_items: string[];
   audit_engine?: string;
+  sentiment_score?: string;
+  sentiment_rationale?: string | null;
+  compliance_score?: number;
 }
 
 export interface CallSession {

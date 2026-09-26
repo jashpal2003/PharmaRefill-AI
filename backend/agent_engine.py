@@ -32,6 +32,7 @@ from backend.database import (
 )
 from backend.i18n import localize_outbound, normalize_inbound
 from backend.identity import parse_spoken_dob
+from backend.phonetic_repair import find_phonetic_repair_candidate
 
 logger = logging.getLogger("PharmaAgentEngine")
 
@@ -115,6 +116,7 @@ class PharmaAgentEngine:
         self.offered_slots: List[str] = []
         self.last_intent = "GREETING"
         self.escalation_reason: Optional[str] = None
+        self.pending_phonetic_candidate: Optional[Dict[str, Any]] = None
 
         self._check_passive_ani()
 
@@ -307,6 +309,42 @@ class PharmaAgentEngine:
         text_lower = text.lower()
         prescriptions = get_prescriptions_for_patient(self.patient_id) if self.patient_id else []
 
+        # Check if caller is confirming a pending phonetic repair candidate ("Say Less" pattern)
+        if self.pending_phonetic_candidate:
+            cand = self.pending_phonetic_candidate
+            if AFFIRM.search(text_lower) or any(w in text_lower for w in ["that one", "that's it", "correct", "the statin", "right", "yes please"]):
+                self.pending_phonetic_candidate = None
+                matched = cand["matched_rx"]
+                self.last_intent = "REFILL"
+                self.requested_medication = matched
+                if matched.get("refills_remaining", 0) <= 0:
+                    return self._trigger_escalation(
+                        EscalationReason.ZERO_REFILLS_DOCTOR_RENEWAL,
+                        f"Your prescription for {matched['drug_name']} has zero refills remaining. "
+                        "I am connecting you to our prescriber line so we can request a renewal authorization from your doctor.")
+
+                with get_db_connection() as conn:
+                    sync = [dict(s) for s in conn.execute("""
+                        SELECT * FROM prescriptions
+                        WHERE patient_id = ? AND rx_number != ? AND dea_schedule = 0 AND refills_remaining > 0
+                        AND next_refill_due_date BETWEEN date('now') AND date('now', '+7 days')
+                    """, (self.patient_id, matched["rx_number"])).fetchall()]
+                self.synced_medications = sync
+                if sync:
+                    self.state = AgentState.MED_SYNC_PROPOSAL
+                    self.retry_count = 0
+                    names = " and ".join(s["drug_name"].split()[0] for s in sync)
+                    return self._reply(
+                        f"I have queued your {matched['drug_name']}. I also noticed that your {names} "
+                        "will run out in less than a week. Would you like me to synchronize them so you can pick up all medications together this Friday?")
+                self.state = AgentState.COPAY_CONFIRMATION
+                return self._execute_copay_check(False)
+            elif DECLINE.search(text_lower):
+                self.pending_phonetic_candidate = None
+                return self._reply("Understood. Which prescription would you like to refill?")
+            else:
+                self.pending_phonetic_candidate = None
+
         # 1. DEA controlled substance hard block
         ctrl = self._mentions_controlled(text_lower, prescriptions)
         if ctrl:
@@ -364,8 +402,40 @@ class PharmaAgentEngine:
 
         # 5. Refill
         matched = self._match_rx(text_lower, prescriptions)
+        if not matched:
+            # Phonetic Smart Clarification ("Say Less" pattern)
+            cand = find_phonetic_repair_candidate(text_lower, prescriptions)
+            if cand:
+                rx_match = cand["matched_rx"]
+                if rx_match.get("dea_schedule", 0) >= 2:
+                    self.last_intent = "REFILL_CONTROLLED"
+                    self.requested_medication = rx_match
+                    with get_db_connection() as conn:
+                        conn.execute("""
+                            INSERT OR REPLACE INTO dispense_orders (order_id, session_id, rx_number, patient_id, status)
+                            VALUES (?, ?, ?, ?, 'BLOCKED_DEA_REVIEW')
+                        """, (f"ORD-{rx_match['rx_number']}-BLKD", self.session_id, rx_match["rx_number"], self.patient_id))
+                        conn.commit()
+                    return self._trigger_escalation(
+                        EscalationReason.DEA_CONTROLLED_SUBSTANCE,
+                        f"Under Title 21 of the Code of Federal Regulations and pharmacy safety policy, "
+                        f"automated refills are not permitted for {rx_match['drug_name']}, as it is a Schedule {rx_match['dea_schedule']} controlled substance. "
+                        "I have flagged your record for review and am transferring you directly to our on-duty pharmacist.")
+
+                self.pending_phonetic_candidate = cand
+                self.last_intent = "PHONETIC_CLARIFICATION"
+                reply = self._reply(cand["clarification_prompt"])
+                reply["phonetic_repair"] = {
+                    "target_drug": cand["target_drug"],
+                    "confidence": cand["confidence"],
+                    "repair_type": cand["repair_type"],
+                    "voiced_token": cand["voiced_token"]
+                }
+                return reply
+
         if not matched and (AFFIRM.search(text_lower) or _contains_word(text_lower, "refill")):
             matched = self.requested_medication or next((m for m in prescriptions if m["dea_schedule"] == 0), None)
+
         if not matched:
             if DECLINE.search(text_lower):
                 self.state = AgentState.CALL_COMPLETED

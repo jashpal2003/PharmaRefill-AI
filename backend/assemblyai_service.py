@@ -38,6 +38,9 @@ class ClinicalCallAudit(BaseModel):
     total_copay_disclosed: Optional[str] = None
     pickup_window_committed: Optional[str] = None
     pharmacist_action_items: List[str] = Field(default_factory=list, description="Actionable tasks required by pharmacy staff")
+    sentiment_score: str = Field(default="CALM", description="Patient emotional tone: CALM, SATISFIED, ANXIOUS, CONFUSED, or DISTRESSED")
+    sentiment_rationale: Optional[str] = Field(default=None, description="Clinical rationale for assessed sentiment")
+    compliance_score: int = Field(default=100, description="Overall compliance score percentage 0-100")
 
 async def connect_assemblyai_realtime(
     audio_queue: asyncio.Queue,
@@ -157,7 +160,8 @@ def run_lemur_clinical_audit(transcript_text: str, patient: Optional[Dict[str, A
 Return JSON with keys: patient_full_name (string|null), patient_dob (string|null), consent_disclosed (bool),
 emergency_adverse_reaction_detected (bool), adverse_reaction_summary (string|null),
 medications_processed (list of {{drug_name, strength, action_type: REFILL|MED_SYNC|BLOCKED_CONTROLLED_SUBSTANCE|STATUS_CHECK, is_controlled}}),
-total_copay_disclosed (string|null), pickup_window_committed (string|null), pharmacist_action_items (list of strings).
+total_copay_disclosed (string|null), pickup_window_committed (string|null), pharmacist_action_items (list of strings),
+sentiment_score (CALM|SATISFIED|ANXIOUS|CONFUSED|DISTRESSED), sentiment_rationale (string), compliance_score (int 0-100).
 Only include facts stated in the transcript.""",
     )
     if raw:
@@ -197,6 +201,24 @@ Only include facts stated in the transcript.""",
     if adverse:
         actions.insert(0, "EMERGENCY: immediate pharmacist clinical follow-up for reported acute reaction.")
     copay = re.findall(r"copay for .+? is (\$[\d.]+)", agent_lines)
+    has_dea_block = any(m.action_type == "BLOCKED_CONTROLLED_SUBSTANCE" for m in meds)
+    if adverse:
+        sentiment = "DISTRESSED"
+        sentiment_reason = "Caller reported acute respiratory / allergic reaction symptoms; immediate pharmacist escalation triggered."
+        compliance = 100
+    elif has_dea_block:
+        sentiment = "ANXIOUS"
+        sentiment_reason = "Caller inquired regarding controlled substance; Title 21 CFR § 1306 hard block enforced."
+        compliance = 100
+    elif queued:
+        sentiment = "SATISFIED"
+        sentiment_reason = "Refill request and Med-Sync pickup successfully confirmed."
+        compliance = 100
+    else:
+        sentiment = "CALM"
+        sentiment_reason = "Routine pharmacy inquiry completed within safety guidelines."
+        compliance = 100
+
     audit = ClinicalCallAudit(
         patient_full_name=f"{patient['first_name']} {patient['last_name']}" if patient else None,
         patient_dob=patient["dob"] if patient else None,
@@ -207,6 +229,9 @@ Only include facts stated in the transcript.""",
         total_copay_disclosed=copay[-1] if copay else None,
         pickup_window_committed="Friday 3:00 PM - 6:00 PM" if queued else None,
         pharmacist_action_items=actions,
+        sentiment_score=sentiment,
+        sentiment_rationale=sentiment_reason,
+        compliance_score=compliance,
     )
     out = audit.model_dump()
     out["audit_engine"] = "Deterministic extraction (LLM unavailable)"

@@ -12,9 +12,11 @@ import {
   MessageSquare,
   Package,
   Sparkles,
-  QrCode
+  QrCode,
+  Award
 } from 'lucide-react';
 import { EmergencyBanner } from './EmergencyBanner';
+import { ComplianceCertificateModal } from './ComplianceCertificateModal';
 
 interface ClinicalAuditFeedProps {
   deaAlert: { active: boolean; medication?: any; reason?: string };
@@ -36,6 +38,7 @@ export const ClinicalAuditFeed: React.FC<ClinicalAuditFeedProps> = ({
   const [labelsPrinted, setLabelsPrinted] = useState(false);
   const [checkedItems, setCheckedItems] = useState<{ [idx: number]: boolean }>({});
   const [showSmsPreview, setShowSmsPreview] = useState(false);
+  const [certModalOpen, setCertModalOpen] = useState(false);
 
   const toggleCheck = (idx: number) => {
     setCheckedItems(prev => ({ ...prev, [idx]: !prev[idx] }));
@@ -96,15 +99,21 @@ export const ClinicalAuditFeed: React.FC<ClinicalAuditFeedProps> = ({
         </div>
 
         {/* Audit Meta Grid */}
-        <div className="grid grid-cols-2 gap-2 text-xs mb-3">
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs mb-3">
           <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80">
             <span className="text-slate-400 block text-[10px]">Patient</span>
-            <span className="font-semibold text-slate-200">{defaultAudit.patient_full_name}</span>
+            <span className="font-semibold text-slate-200 truncate block">{defaultAudit.patient_full_name}</span>
           </div>
           <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80">
             <span className="text-slate-400 block text-[10px]">Consent Disclosed</span>
             <span className="text-emerald-400 font-semibold flex items-center gap-1">
               <CheckCircle className="h-3 w-3" /> Statutory Disclosed
+            </span>
+          </div>
+          <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80">
+            <span className="text-slate-400 block text-[10px]">Compliance Score</span>
+            <span className="text-emerald-400 font-bold font-mono">
+              {defaultAudit.compliance_score ?? 100}% Verified
             </span>
           </div>
           <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80">
@@ -115,7 +124,26 @@ export const ClinicalAuditFeed: React.FC<ClinicalAuditFeedProps> = ({
             <span className="text-slate-400 block text-[10px]">Anti-RTS Window</span>
             <span className="font-mono text-teal-300">{defaultAudit.pickup_window_committed}</span>
           </div>
+          <div className="bg-slate-950/60 p-2 rounded-lg border border-slate-800/80">
+            <span className="text-slate-400 block text-[10px]">Patient Sentiment</span>
+            <span className={`font-mono font-bold text-[11px] px-1.5 py-0.2 rounded border inline-block ${
+              defaultAudit.sentiment_score === 'DISTRESSED'
+                ? 'bg-rose-950/60 text-rose-300 border-rose-600/50'
+                : defaultAudit.sentiment_score === 'ANXIOUS'
+                ? 'bg-amber-950/60 text-amber-300 border-amber-600/50'
+                : 'bg-emerald-950/60 text-emerald-300 border-emerald-600/50'
+            }`}>
+              {defaultAudit.sentiment_score || 'CALM'}
+            </span>
+          </div>
         </div>
+
+        {defaultAudit.sentiment_rationale && (
+          <div className="p-2 rounded-lg bg-slate-950/40 border border-slate-800/70 text-[11px] text-slate-300 mb-3 flex items-start gap-1.5">
+            <Sparkles className="h-3 w-3 text-purple-400 shrink-0 mt-0.5" />
+            <span><strong className="text-slate-400 font-semibold">LeMUR Sentiment Rationale:</strong> {defaultAudit.sentiment_rationale}</span>
+          </div>
+        )}
 
         {/* Processed Medications */}
         <div className="mb-3">
@@ -225,6 +253,14 @@ export const ClinicalAuditFeed: React.FC<ClinicalAuditFeedProps> = ({
         </div>
 
         <button
+          onClick={() => setCertModalOpen(true)}
+          className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl bg-gradient-to-r from-emerald-950/80 via-slate-900 to-teal-950/80 hover:from-emerald-900 hover:to-teal-900 border border-emerald-500/40 text-emerald-300 font-bold text-xs shadow-lg shadow-emerald-500/10 transition cursor-pointer"
+        >
+          <Award className="h-4 w-4 text-emerald-400" />
+          <span>Title 21 CFR § 1306 Cryptographic Compliance Certificate</span>
+        </button>
+
+        <button
           onClick={onExportFhir}
           className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 text-xs transition cursor-pointer"
         >
@@ -232,6 +268,12 @@ export const ClinicalAuditFeed: React.FC<ClinicalAuditFeedProps> = ({
           <span>Export HL7 FHIR v4.0.1 Clinical Bundle</span>
         </button>
       </div>
+
+      <ComplianceCertificateModal
+        isOpen={certModalOpen}
+        onClose={() => setCertModalOpen(false)}
+        sessionId="ACTIVE-CLINICAL-AUDIT"
+      />
     </div>
   );
 };

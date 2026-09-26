@@ -175,3 +175,35 @@ def test_spanish_detected_mid_call_and_refill():
     r = e.process_utterance("Hola, necesito resurtir mi receta de Atorvastatin por favor")
     assert e.language == "es" and r["intent"] == "REFILL"
     assert "He puesto en cola" in r["spoken_text"]
+
+
+# --- phonetic repair ("Say Less" pattern) -----------------------------------
+def test_phonetic_repair_say_less_clarification():
+    e = start(ELEANOR, "T-PHON-1")
+    e.process_utterance("April 12, 1958")
+    r = e.process_utterance("I need to refill a tour of statin")
+    assert r["intent"] == "PHONETIC_CLARIFICATION"
+    assert "Atorvastatin" in r["spoken_text"]
+    assert "phonetic_repair" in r
+    # Caller confirms with 1-word affirmative
+    r2 = e.process_utterance("Yes")
+    assert r2["current_state"] == AgentState.MED_SYNC_PROPOSAL
+    assert "Atorvastatin" in r2["spoken_text"]
+
+
+def test_phonetic_repair_colloquial_alias():
+    e = start(ELEANOR, "T-PHON-2")
+    e.process_utterance("April 12, 1958")
+    # Eleanor is on Lisinopril
+    r = e.process_utterance("Can I refill my blood pressure pill?")
+    assert r["intent"] == "PHONETIC_CLARIFICATION"
+    assert "Lisinopril" in r["spoken_text"]
+
+
+def test_phonetic_repair_controlled_substance_safeguard():
+    e = start(ELEANOR, "T-PHON-3")
+    e.process_utterance("April 12, 1958")
+    r = e.process_utterance("Can I get my pain killer refilled?")
+    assert r["is_escalation"]
+    assert r["escalation_reason"] == EscalationReason.DEA_CONTROLLED_SUBSTANCE.value
+

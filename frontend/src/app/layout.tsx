@@ -32,7 +32,7 @@ export default function RootLayout({
       <body
         className="min-h-screen antialiased overflow-x-hidden"
         style={{
-          background: "#060c18",
+          background: "#030711",
           fontFamily: "var(--font-inter), -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
         }}
       >

@@ -161,3 +161,61 @@ def test_dispense_all_records_fills(client):
     with get_db_connection() as conn:
         refills = conn.execute("SELECT refills_remaining FROM prescriptions WHERE rx_number = 'RX-4829103'").fetchone()[0]
     assert refills == 1 and before["patient_id"] == "PAT-1001"
+
+
+# --- Winning Feature 1: Source-Linked Evidence Quotes in SOAP Notes ---
+def test_soap_note_has_source_evidence(client):
+    # Simulate a call to seed transcript
+    sid = "SOAP-EVID-1"
+    for u in ["START", "April 12, 1958", "refill my atorvastatin", "yes", "yes", "yes"]:
+        client.post("/api/call/simulate-step", headers=RPH, json={"session_id": sid, "utterance": u})
+    res = client.post("/api/clinical/soap-note", headers=RPH, json={"patient_id": "PAT-1001", "session_id": sid})
+    assert res.status_code == 200
+    data = res.json()
+    assert "source_evidence" in data
+    assert "subjective" in data["source_evidence"]
+    assert "plan" in data["source_evidence"]
+    # Evidence quotes must have confidence scores and quotes
+    for ev in data["source_evidence"]["subjective"]:
+        assert "quote" in ev and "confidence" in ev and ev["confidence"] > 0.90
+
+
+# --- Winning Feature 3: Cryptographic SHA-256 Compliance Certificate ---
+def test_compliance_certificate_generation_and_tamper_verification(client):
+    sid = "CERT-TEST-1"
+    cert_res = client.get(f"/api/compliance/certificate/{sid}", headers=RPH)
+    assert cert_res.status_code == 200
+    cert = cert_res.json()
+    assert "certificate_id" in cert
+    assert "cryptographic_proof" in cert
+    sig = cert["cryptographic_proof"]["certificate_signature"]
+    assert len(sig) == 64  # SHA-256 hexadecimal string length
+
+    # Verify genuine signature
+    verify_res = client.get(f"/api/compliance/verify/{sid}?hash={sig}", headers=RPH)
+    assert verify_res.status_code == 200
+    v = verify_res.json()
+    assert v["is_valid"] is True
+    assert v["tamper_status"] == "AUTHENTIC_UNMODIFIED"
+
+    # Verify tampered signature fails
+    fake_sig = "a" * 64
+    fake_res = client.get(f"/api/compliance/verify/{sid}?hash={fake_sig}", headers=RPH)
+    assert fake_res.json()["is_valid"] is False
+    assert fake_res.json()["tamper_status"] == "TAMPER_DETECTED"
+
+
+# --- Winning Feature 4: Interactive Turn-Detection & VAD Tuning ---
+def test_vad_tuning_api(client):
+    # Set to Rapid Fire (300ms)
+    r1 = client.post("/api/settings/vad", headers=RPH, json={"threshold_ms": 300}).json()
+    assert r1["threshold_ms"] == 300 and r1["mode"] == "RAPID_FIRE"
+
+    # Set to Elderly Caller (750ms)
+    r2 = client.post("/api/settings/vad", headers=RPH, json={"threshold_ms": 750}).json()
+    assert r2["threshold_ms"] == 750 and r2["mode"] == "ELDERLY_CALLER"
+
+    # Query current setting
+    r3 = client.get("/api/settings/vad", headers=RPH).json()
+    assert r3["threshold_ms"] == 750
+
